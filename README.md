@@ -2,7 +2,11 @@
 
 Code and data to reproduce the algorithms, numerical experiments and case studies in:
 
-> Chan, T. C. Y., Chen, N., Fernandes, C., & Maaz, M. (2025). *Estimating Distributions with Failure Rate Properties from Noisy Quantile Data.*
+> *Estimating Distributions with Failure Rate Properties from Noisy Quantile Data.*
+> Timothy C.Y. Chan (MIE, UToronto)
+> Ningyuan Chen (Rotman, UToronto)
+> Craig Fernandes (Wharton, UPenn)
+> Muhammad Maaz (MIE, UToronto)
 
 **Setting.** Given noisy binomial observations at a handful of quantile points $x_1 < \dots < x_k$ (i.e., $y_i$ successes out of $n_i$ trials at each $x_i$), the paper fits a CDF $\hat F$ that is guaranteed to have increasing failure rate (IFR). The key idea is a change of variables $t(x) = \ln(1 - F(x))$, under which the IFR constraint becomes concavity of $t$. This turns a non-convex, infinite-dimensional MLE into a finite-dimensional convex program (**Algorithm 1**), solved with CVXPY and interpolated back to a continuous CDF via a Schumaker spline.
 
