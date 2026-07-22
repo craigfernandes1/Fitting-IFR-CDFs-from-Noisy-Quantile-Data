@@ -52,4 +52,4 @@ Each notebook's computation cells are separated from its plotting cells, so figu
 
 ## Questions
 
-Contact the corresponding author at craig.fernandes@mail.utoronto.ca.
+Contact the corresponding author at craigfer@wharton.upenn.edu
