@@ -9,51 +9,63 @@ from scipy import stats
 
 
 def linear_interpolation(x, y, **kwargs):
+    """Construct a symbolic piecewise-linear interpolant.
+
+    The interpolant is defined only on the closed interval [x[0], x[-1]].
+    Outside that interval it evaluates to NaN, allowing the calling function
+    to specify its own tail behavior explicitly.
     """
-    Construct a sympy piecewise function representing the linear interpolation of y(x)
-    given data points (x, y). The resulting function is only defined for
-    x in [x[0], x[-1]].
+    # Convert inputs to floating-point NumPy arrays.  This ensures that slope
+    # calculations use standard numeric arithmetic rather than list operations.
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
 
-    Args:
-        x (list or np.ndarray): A sequence of x-values in strictly increasing order.
-        y (list or np.ndarray): A sequence of corresponding y-values.
-        **kwargs: Additional keyword arguments (none are actually used)
+    # Check that the supplied knot locations and values are compatible.
+    if x.ndim != 1 or y.ndim != 1 or len(x) != len(y):
+        raise ValueError("x and y must be one-dimensional arrays of equal length.")
+    if len(x) == 0:
+        raise ValueError("x and y must be nonempty.")
 
-    Returns:
-        sp.Piecewise: A sympy piecewise function which linearly interpolates y over the
-                      interval [x[0], x[-1]].
-    """
-    # Data sanity checks
-    assert len(x) == len(y), "x and y must have the same length"
-    x, y = np.array(x), np.array(y)
-    assert np.all(np.diff(x) > 0), "x must be strictly increasing"
+    # Piecewise-linear interpolation requires strictly increasing knot locations.
+    if len(x) > 1 and not np.all(np.diff(x) > 0):
+        raise ValueError("x must be strictly increasing.")
 
-    x_sym = sp.symbols('x')
+    # Use the same symbolic variable convention as the rest of the package.
+    x_sym = sp.symbols("x")
+
+    # A one-point "interpolant" is defined only at that point.  This case occurs
+    # in Algorithm 1 when every observed knot is an all-success knot.
+    if len(x) == 1:
+        return sp.Piecewise(
+            (sp.Float(y[0]), sp.Eq(x_sym, sp.Float(x[0]))),
+            (sp.nan, True),
+        )
+
     pieces = []
-    n = len(x)
 
-    # If there's only a single point, return a constant function.
-    if n == 1:
-        return sp.Piecewise((y[0], True))
-
-    # Create linear interpolation pieces for each interval between adjacent points.
-    for i in range(n - 1):
+    # Construct one affine expression on each adjacent interval [x_i, x_{i+1}].
+    for i in range(len(x) - 1):
         left = x[i]
-        right = x[i+1]
-        # Compute the slope between the two points.
-        slope = (y[i+1] - y[i]) / (right - left)
-        # Linear expression: y = y_points[i] + slope*(x - left)
-        expr = y[i] + slope * (x_sym - left)
-        # Define the condition for this piece. For the first n-2 intervals, we use [left, right),
-        # and for the final interval we include the right endpoint.
-        if i < n - 2:
+        right = x[i + 1]
+
+        # The slope and affine expression through (left, y_i).
+        slope = (y[i + 1] - y[i]) / (right - left)
+        expression = y[i] + slope * (x_sym - left)
+
+        # Use left-closed/right-open intervals except for the last interval.
+        # This gives every point exactly one active branch while including x[-1].
+        if i < len(x) - 2:
             condition = (x_sym >= left) & (x_sym < right)
         else:
             condition = (x_sym >= left) & (x_sym <= right)
-        pieces.append((expr, condition))
 
-    piecewise_function = sp.Piecewise(*pieces)
-    return piecewise_function
+        pieces.append((expression, condition))
+
+    # Do not extrapolate linearly beyond the fitted knots.  The estimator's
+    # analytic tail is constructed separately in fit_cdf.
+    pieces.append((sp.nan, True))
+
+    return sp.Piecewise(*pieces)
 
 '''
 THE BELOW IMPLEMENTATION OF THE SCHUMAKER SPLINE IS COURTESY OF:
