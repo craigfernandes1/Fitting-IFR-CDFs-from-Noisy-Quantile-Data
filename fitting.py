@@ -291,7 +291,7 @@ def fit_cdf_nonconvex(x, n, y, l, u, d, ifr_constraint=False, verbose=False, ret
 
     Raises:
         RuntimeError: If Gurobi fails to find a feasible solution within the
-            600-second time limit.
+            300-second time limit.
         ValueError: If ``return_type`` is not ``'values'`` or ``'sympy'``.
     """
     model = gp.Model()
