@@ -677,7 +677,8 @@ for m, label, c, ls in zip(method_keys, method_labels, colors, linestyles):
     slice_ = raw_errors[m][ki_fix, :, :]   # shape (len_n_i, num_runs)
     with np.errstate(all='ignore'):
         y_mean = np.nanmean(slice_, axis=1)
-        y_se   = np.nanstd( slice_, axis=1, ddof=1) / np.sqrt(num_runs_)
+        n_success = np.sum(np.isfinite(slice_), axis=1)
+        y_se = np.nanstd(slice_, axis=1, ddof=1) / np.sqrt(n_success)
     ax.plot(n_i_values, y_mean, marker='o', color=c, linestyle=ls, label=label)
     ax.fill_between(n_i_values, y_mean - y_se, y_mean + y_se, alpha=0.15, color=c)   # ±1 SE band
 ax.set_xlabel(r'$n_i$')
@@ -691,7 +692,8 @@ for m, label, c, ls in zip(method_keys, method_labels, colors, linestyles):
     slice_ = raw_errors[m][:, ni_fix, :]   # shape (len_k, num_runs)
     with np.errstate(all='ignore'):
         y_mean = np.nanmean(slice_, axis=1)
-        y_se   = np.nanstd( slice_, axis=1, ddof=1) / np.sqrt(num_runs_)
+        n_success = np.sum(np.isfinite(slice_), axis=1)
+        y_se = np.nanstd(slice_, axis=1, ddof=1) / np.sqrt(n_success)
     ax.plot(k_values, y_mean, marker='o', color=c, linestyle=ls, label=label)
     ax.fill_between(k_values, y_mean - y_se, y_mean + y_se, alpha=0.15, color=c)   # ±1 SE band
 ax.set_xlabel(r'$k$')
@@ -924,7 +926,7 @@ print(f'Total time: {time.perf_counter() - t_start:.1f}s')
 #%%
 
 appendix_dists  = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
-d_values        = [1,2]
+d_values        = [2,4,6]
 nc_linestyles   = ['-', '--', ':', '-.', (0, (3, 1, 1, 1))]
 method_keys     = ['algo1'] + [f'discretized_ifr_{d}' for d in d_values] + ['discretized_non_ifr']
 method_labels   = (['Algorithm 1']
