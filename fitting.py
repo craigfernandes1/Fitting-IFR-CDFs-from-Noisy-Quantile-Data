@@ -6,6 +6,65 @@ from gurobipy import GRB, nlfunc
 from utils import linear_interpolation, schumaker_spline, discrete_interpolation
 from scipy.stats import linregress
 
+
+def eval_step_cdf(x_grid, F_grid, x):
+    """Evaluate a right-continuous step cdf at x.
+
+    Uses the convention that the fitted cdf equals ``F_grid[j]`` on the
+    half-open interval ``[x_grid[j], x_grid[j+1])``, with ``F = F_grid[-1]`` for
+    ``x >= x_grid[-1]`` (``F_grid[-1] = 1`` by construction). This is the single
+    shared evaluator for every step-cdf benchmark (``fit_cdf_nonconvex`` output):
+    sup-norm error, downstream decisions, and plots.
+
+    Args:
+        x_grid (np.ndarray): Strictly increasing grid breakpoints.
+        F_grid (np.ndarray): Step values, same length as ``x_grid``.
+        x (float or np.ndarray): Query point(s).
+
+    Returns:
+        float or np.ndarray: Step-cdf value(s); float for scalar ``x``.
+    """
+    x_grid = np.asarray(x_grid, dtype=float)
+    F_grid = np.asarray(F_grid, dtype=float)
+    idx = np.clip(np.searchsorted(x_grid, x, side='right') - 1, 0, len(F_grid) - 1)
+    return F_grid[idx]
+
+
+def l_inf_step_vs_cdf(x_grid, F_grid, true_cdf, x_max=None):
+    """Sup-norm distance between a right-continuous step cdf and a monotone cdf.
+
+    The step cdf is constant at ``F_grid[j]`` on ``[x_grid[j], x_grid[j+1])``, so
+    the worst-case error on each interval is attained at one of its endpoints
+    (the true cdf is monotone). Intervalwise evaluation therefore uses
+    ``F_grid[:-1]`` against the true cdf at both endpoints. If ``x_max`` is given,
+    only intervals starting before ``x_max`` are included and right endpoints are
+    capped at ``x_max``.
+
+    Args:
+        x_grid (np.ndarray): Strictly increasing grid breakpoints.
+        F_grid (np.ndarray): Step values, same length as ``x_grid``.
+        true_cdf (callable): Vectorized true cdf accepting a NumPy array.
+        x_max (float, optional): Upper cutoff for the comparison region.
+
+    Returns:
+        float: The sup-norm distance.
+    """
+    x_grid = np.asarray(x_grid, dtype=float)
+    F_grid = np.asarray(F_grid, dtype=float)
+    step   = F_grid[:-1]
+    x_left = x_grid[:-1]
+    x_right = x_grid[1:]
+    if x_max is not None:
+        mask    = x_left < x_max
+        step    = step[mask]
+        x_left  = x_left[mask]
+        x_right = np.minimum(x_right[mask], x_max)
+    return float(np.max(np.maximum(
+        np.abs(step - true_cdf(x_left)),
+        np.abs(step - true_cdf(x_right)),
+    )))
+
+
 def fit_cdf(x, n, y, l, u, interpolation_method="linear", **kwargs):
     """Fit the IFR cdf estimator specified in Algorithm 1.
 
@@ -314,11 +373,22 @@ def fit_cdf_nonconvex(x, n, y, l, u, d, ifr_constraint=False, verbose=False, ret
     for i in range(n_points):
         model.addConstr(F[i] <= F[i + 1])
 
-    # IFR constraint (rearranged to bilinear, ie nonconvex quadratic)
+    # IFR constraint as a width-weighted bilinear (nonconvex quadratic) inequality.
+    # Discrete IFR = discrete hazard rate nondecreasing across adjacent intervals:
+    #   (F_i - F_{i-1}) / [ (x_i - x_{i-1}) (1 - F_{i-1}) ]
+    #       <= (F_{i+1} - F_i) / [ (x_{i+1} - x_i) (1 - F_i) ].
+    # Cross-multiplying (widths and survival terms are positive) gives the bilinear
+    # form below. The interval widths are required on a nonuniform grid; on a
+    # uniform grid they cancel and this reduces to the usual equal-width condition
+    # (1 - F_i)^2 >= (1 - F_{i-1})(1 - F_{i+1}).
     if ifr_constraint:
+        x_grid_full = np.append(fine_grid, u)
         for i in range(1, n_points):
+            w_l = x_grid_full[i] - x_grid_full[i - 1]
+            w_r = x_grid_full[i + 1] - x_grid_full[i]
             model.addConstr(
-                (F[i] - F[i - 1]) * (1 - F[i]) <= (F[i + 1] - F[i]) * (1 - F[i - 1]),
+                (F[i] - F[i - 1]) * w_r * (1 - F[i])
+                <= (F[i + 1] - F[i]) * w_l * (1 - F[i - 1]),
                 name=f"ifr_quad_{i}"
             )
 
@@ -327,19 +397,31 @@ def fit_cdf_nonconvex(x, n, y, l, u, d, ifr_constraint=False, verbose=False, ret
     # In gurobi, to do nonlinear objective, have to introduce a new variable and make a nonlinear constraint
     z = model.addVar(name="z", lb=-GRB.INFINITY, ub=GRB.INFINITY)
 
-    # we will appropriately bound z to help the solver
-    # upper bound is the usual binomial log-likelihood
-    n_arr, y_arr = np.array(n), np.array(y)
-    p_hat = np.clip(y_arr/n_arr, 1e-8, 1 - 1e-8) # if its exactly 0 or 1, we clip it to avoid log(0)
-    z_max = np.sum(y_arr * np.log(p_hat) + (n_arr - y_arr) * np.log(1 - p_hat))
+    # Bound z to help the solver. The upper bound is the saturated (unconstrained)
+    # binomial log-likelihood, computed with the exact convention 0*log(0)=0 and no
+    # clipping: an all-failure knot (y_i=0) or all-success knot (y_i=n_i) contributes
+    # exactly 0, so the bound never falls below the true optimum.
+    n_arr, y_arr = np.asarray(n, dtype=float), np.asarray(y, dtype=float)
+    z_max = 0.0
+    for yi, ni in zip(y_arr, n_arr):
+        if yi > 0:
+            z_max += yi * np.log(yi / ni)
+        if ni - yi > 0:
+            z_max += (ni - yi) * np.log(1 - yi / ni)
     model.addConstr(z <= z_max)
-    # lower bound is...
 
-    # lastly define z as the log-likelihood
-    model.addConstr(z == gp.quicksum(
-        y[i] * nlfunc.log(F[(i+1)*(d+1)]) + (n[i] - y[i]) * nlfunc.log(1 - F[(i+1)*(d+1)])
-        for i in range(len(x))
-    ))
+    # Define z as the binomial log-likelihood at the observed knots. A term is
+    # appended only when its count is positive, matching Algorithm 1's treatment of
+    # boundary counts (0*log(0)=0) and avoiding a 0*log(0)=NaN term at all-success
+    # or all-failure knots, where F_i is driven to 1 or 0.
+    ll_terms = []
+    for i in range(len(x)):
+        knot_idx = (i + 1) * (d + 1)
+        if y[i] > 0:
+            ll_terms.append(y[i] * nlfunc.log(F[knot_idx]))
+        if n[i] - y[i] > 0:
+            ll_terms.append((n[i] - y[i]) * nlfunc.log(1 - F[knot_idx]))
+    model.addConstr(z == gp.quicksum(ll_terms))
 
     model.setObjective(z, GRB.MAXIMIZE)
     model.setParam("TimeLimit", 300)
@@ -356,16 +438,16 @@ def fit_cdf_nonconvex(x, n, y, l, u, d, ifr_constraint=False, verbose=False, ret
     if return_type == 'values':
         return np.append(fine_grid, u), estimated_cdf
     elif return_type == 'sympy':
-        # Create a sympy step function for plotting discrete CDF
+        # Right-continuous step cdf, matching eval_step_cdf: value estimated_cdf[j]
+        # on [x_grid[j], x_grid[j+1]), with F = 1 for x >= u.
         x_sym = sp.symbols('x')
-        pieces = []
-        pieces.append((estimated_cdf[0], x_sym <= fine_grid[0]))
-        for i in range(n_points - 1):
-            pieces.append((estimated_cdf[i+1], (x_sym > fine_grid[i]) & (x_sym <= fine_grid[i+1])))
-        pieces.append((estimated_cdf[-1], x_sym > fine_grid[-1]))
-        pieces.insert(0, (0, x_sym < fine_grid[0]))
-        pieces.append((1, x_sym > fine_grid[-1]))
-        return sp.Piecewise(*pieces, (0, True))
+        x_grid_full = np.append(fine_grid, u)
+        pieces = [(0, x_sym < x_grid_full[0])]
+        for j in range(len(x_grid_full) - 1):
+            pieces.append((estimated_cdf[j],
+                           (x_sym >= x_grid_full[j]) & (x_sym < x_grid_full[j + 1])))
+        pieces.append((1, x_sym >= x_grid_full[-1]))
+        return sp.Piecewise(*pieces)
     else:
         raise ValueError(f"Invalid return type: {return_type}. Choose 'sympy' or 'values'.")
 
@@ -389,6 +471,13 @@ def fit_weibull_cdf(x, n, y, l, u, x_sym):
     Returns:
         sympy.Expr: Fitted truncated Weibull CDF as a symbolic expression in
             ``x_sym``.
+
+    Raises:
+        ValueError: If the log-log regression is degenerate -- a non-positive
+            shape estimate (slope <= 0) or a non-finite scale estimate. This
+            occurs for the 3-knot probability-plot fit when the noisy empirical
+            quantiles are (near-)collinear with zero or negative trend in
+            log-log space. The caller should treat such a fit as a failed run.
     """
 
     # linear regression set up
@@ -398,7 +487,24 @@ def fit_weibull_cdf(x, n, y, l, u, x_sym):
 
     # recover parameters
     sh_hat = res.slope
-    lamb_hat = np.exp(-res.intercept / res.slope)
+
+    # A valid Weibull requires a positive shape. A non-positive slope means the
+    # empirical quantiles have no (or a decreasing) log-log trend, giving a
+    # degenerate fit: slope == 0 divides by zero below, and slope < 0 yields a
+    # non-increasing "cdf". Reject so the caller records a failed run.
+    if not np.isfinite(sh_hat) or sh_hat <= 0:
+        raise ValueError(
+            f"Degenerate Weibull fit: non-positive log-log slope (shape={sh_hat})."
+        )
+
+    # Even with a positive slope, a near-zero slope can overflow the scale. Compute
+    # it quietly and reject a non-finite result rather than returning a garbage cdf.
+    with np.errstate(over='ignore', invalid='ignore'):
+        lamb_hat = np.exp(-res.intercept / res.slope)
+    if not np.isfinite(lamb_hat) or lamb_hat <= 0:
+        raise ValueError(
+            f"Degenerate Weibull fit: non-finite scale estimate (scale={lamb_hat})."
+        )
 
     # create sympy representation of estimated weibull
     weibull_cdf_result_nontrunc = 1 - sp.exp(-(x_sym / lamb_hat) ** sh_hat)

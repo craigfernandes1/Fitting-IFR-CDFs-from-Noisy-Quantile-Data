@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.stats import beta as beta_dist, truncnorm, gamma as gamma_dist, weibull_min
-from fitting import fit_cdf
+from fitting import fit_cdf, l_inf_step_vs_cdf
 import sympy as sp
 from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
@@ -102,13 +102,10 @@ def calculate_error_for_params(n_i, delta, interpolation_method, dist):
 def _l_inf_step_dist(x_nc, F_nc, dist):
     """L-inf between a step CDF (from fit_cdf_nonconvex) and the true dist CDF.
 
-    The step CDF is constant on each interval (x_nc[i], x_nc[i+1]), so the worst-case
-    error on that interval is the max of the absolute gaps at both endpoints.
+    Thin adapter to the shared right-continuous step-cdf sup-norm evaluator in
+    fitting.py, so the step-cdf convention is defined in exactly one place.
     """
-    step_vals  = F_nc[:-1]
-    true_left  = dist.cdf(x_nc[:-1])
-    true_right = dist.cdf(x_nc[1:])
-    return float(np.max(np.maximum(np.abs(step_vals - true_left), np.abs(step_vals - true_right))))
+    return l_inf_step_vs_cdf(x_nc, F_nc, dist.cdf)
 
 #%%
 
