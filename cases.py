@@ -278,7 +278,7 @@ ax_full = axes[0]
 _add_mean_sd(ax_full, all_errors)
 ax_full.set_xticks(x_pos)
 ax_full.set_xticklabels(display_names)
-ax_full.set_ylabel(r'$\|F_0 - \hat{F}\|$')
+ax_full.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
 ax_full.set_yticks([0, 0.2, 0.4, 0.6, 0.8])
 ax_full.set_ylim([0, 0.85])
 ax_full.grid(True, which='both', ls='--')
@@ -689,7 +689,7 @@ ax_full = axes[0]
 _rel_mean_sd(ax_full, all_errors_r)
 ax_full.set_xticks(x_pos_r)
 ax_full.set_xticklabels(display_names_r)
-ax_full.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,\,u]}$')
+ax_full.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
 ax_full.set_ylim(0, 0.85)
 ax_full.grid(True, axis='y', ls='--')
 

@@ -142,168 +142,6 @@ plt.savefig('results/plots/distributions_overview.png', dpi=150, bbox_inches='ti
 plt.show()
 
 #%%
-r"""
-Experiment 1 - CANCELLED
-
-
-np.random.seed(0)
-
-# k=20 equidistant knots → Δ=1/21≈0.048; interpolation error ≈ O(1/k²)≈0.0025,
-# well below estimation errors even at the smallest n_i=100, so estimation error dominates
-k_fixed      = 20
-delta_fixed  = (u - l) / (k_fixed + 1)   # Δ = 1/(k+1): spacing of k equidistant interior knots on [l, u]
-n_i_sequence = [100, 500, 2000, 4000, 8000, 12000, 20000,
-                30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]
-num_runs = 10    # 100 for paper results
-
-t_start = time.perf_counter()
-for dist_key, dist_cfg in DISTRIBUTIONS.items():
-    # Accumulators for mean error, sample std, and the n_i values with >=1 successful run
-    avg_errors, std_errors, valid_n_is = [], [], []
-    for n_i in tqdm(n_i_sequence, desc=f'{dist_key}'):
-        errors = [calculate_error_for_params(n_i, delta_fixed, 'linear', dist_cfg['dist'])
-                  for _ in range(num_runs)]
-        errors = [e for e in errors if not np.isnan(e)]   # drop failed runs (infeasible LP)
-        if errors:
-            avg_errors.append(np.mean(errors))
-            std_errors.append(np.std(errors, ddof=1))   # Bessel-corrected sample std
-            valid_n_is.append(n_i)
-
-    suffix = dist_cfg['suffix']
-    np.savez(f'results/data/estimation_error_{suffix}.npz',
-        k_fixed=k_fixed, num_runs=num_runs,
-        linear_n_is=np.array(valid_n_is), linear_errors=np.array(avg_errors),
-        linear_errors_std=np.array(std_errors))
-    print(f'Saved estimation_error_{suffix}.npz')
-
-print(f'Total time: {time.perf_counter() - t_start:.1f}s')
-
-#%%
-
-def plot_estimation_error(ax, dist_cfg):
-    suffix    = dist_cfg['suffix']
-    data      = np.load(f'results/data/estimation_error_{suffix}.npz')
-    num_runs_ = int(data['num_runs'])
-
-    n_is   = data['linear_n_is'].astype(float)
-    errors = data['linear_errors']
-    ses    = data['linear_errors_std'] / np.sqrt(num_runs_)   # standard error of the mean
-
-    ax.plot(n_is, errors, marker='o', linestyle='-',
-            label='Algorithm 1 (empirical)', color='blue')
-    ax.fill_between(n_is, errors - ses, errors + ses, alpha=0.15, color='blue')   # ±1 SE band
-
-    # Anchor the O(1/√n_i) reference at the first data point (index 0)
-    C       = errors[0] * np.sqrt(n_is[0])
-    n_i_ref = np.linspace(n_is[0], n_is[-1], 500)
-    ax.plot(n_i_ref, C / np.sqrt(n_i_ref), linestyle=':', color='blue', alpha=0.7,
-            label=r'Theoretical $O(1/\sqrt{n_i})$')
-
-    ax.set_xlabel(r'$n_i$')
-    ax.set_ylabel(r'$\|F_0 - \hat{F}\|$')
-    ax.legend(fontsize=12)
-    ax.grid(True, ls='--')
-    ax.set_ylim(bottom=0)
-
-# --- Figure 2(a): Beta standalone ---
-fig, ax = plt.subplots(figsize=(11, 6))
-plot_estimation_error(ax, DISTRIBUTIONS['beta'])
-# ax.set_title(DISTRIBUTIONS['beta']['label'], fontsize=18)
-plt.tight_layout()
-plt.savefig(f'results/plots/estimation_error_{DISTRIBUTIONS["beta"]["suffix"]}.png', dpi=150, bbox_inches='tight')
-plt.show()
-
-# --- Appendix (a): TruncNormal, TruncGamma, TruncWeibull — standalone figures ---
-appendix_dists = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
-for dist_key, dist_cfg in appendix_dists.items():
-    fig, ax = plt.subplots(figsize=(11, 6))
-    plot_estimation_error(ax, dist_cfg)
-    plt.tight_layout()
-    plt.savefig(f'results/plots/estimation_error_{dist_cfg["suffix"]}.png', dpi=150, bbox_inches='tight')
-    plt.show()
-
-#%%
-
-np.random.seed(0)
-
-# n_i=100,000 → estimation error ≈ O(1/√n_i) ≈ 0.003, negligible relative to interpolation
-# errors at small k, so interpolation error dominates throughout the k sweep
-n_i_fixed  = 100_000
-k_sequence = list(range(4, 21, 1))   # k ∈ {4, ..., 20}; equidistant spacing Δ=1/(k+1) on [0,1]
-num_runs   = 10    # 100 for paper results
-
-t_start = time.perf_counter()
-for dist_key, dist_cfg in DISTRIBUTIONS.items():
-    avg_errors, std_errors, valid_ks = [], [], []
-    for k in tqdm(k_sequence, desc=f'{dist_key}'):
-        delta  = (u - l) / (k + 1)   # Δ = 1/(k+1): spacing of k equidistant interior knots
-        errors = [calculate_error_for_params(n_i_fixed, delta, 'linear', dist_cfg['dist'])
-                  for _ in range(num_runs)]
-        errors = [e for e in errors if not np.isnan(e)]   # drop failed runs (infeasible LP)
-        if errors:
-            avg_errors.append(np.mean(errors))
-            std_errors.append(np.std(errors, ddof=1))   # Bessel-corrected sample std
-            valid_ks.append(k)
-
-    suffix = dist_cfg['suffix']
-    np.savez(f'results/data/interpolation_error_{suffix}.npz',
-        n_i_fixed=n_i_fixed, num_runs=num_runs,
-        linear_ks=np.array(valid_ks), linear_errors=np.array(avg_errors),
-        linear_errors_std=np.array(std_errors))
-    print(f'Saved interpolation_error_{suffix}.npz')
-
-print(f'Total time: {time.perf_counter() - t_start:.1f}s')
-
-#%%
-
-def plot_interpolation_error(ax, dist_cfg):
-    suffix    = dist_cfg['suffix']
-    data      = np.load(f'results/data/interpolation_error_{suffix}.npz')
-    num_runs_ = int(data['num_runs'])
-
-    ks     = data['linear_ks'].astype(float)
-    errors = data['linear_errors']
-    ses    = data['linear_errors_std'] / np.sqrt(num_runs_)   # standard error of the mean
-
-    ax.plot(ks, errors, marker='o', linestyle='-',
-            label='Algorithm 1 (empirical)', color='blue')
-    ax.fill_between(ks, errors - ses, errors + ses, alpha=0.15, color='blue')   # ±1 SE band
-
-    # Anchor the O(1/k²) reference at the first point (index 0): the k range starts at k=4,
-    # where the asymptotic rate already holds well
-    p     = 2   # Corollary 2: piecewise-linear interpolation error is O(Δ²) ≡ O(1/k²)
-    C     = errors[0] * ks[0] ** p
-    k_ref = np.linspace(ks[0], ks[-1], 200)
-    ax.plot(k_ref, C / k_ref ** p, linestyle=':', color='blue', alpha=0.7,
-            label=r'Theoretical $O(1/k^2)$')
-
-    ax.set_xlabel(r'$k$')
-    ax.set_ylabel(r'$\|F_0 - \hat{F}\|$')
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda val, _: f'{val:.2f}'))
-    ax.legend(fontsize=12)
-    ax.grid(True, ls='--')
-    ax.set_ylim(bottom=0)
-
-# --- Figure 2(b): Beta standalone ---
-fig, ax = plt.subplots(figsize=(11, 6))
-plot_interpolation_error(ax, DISTRIBUTIONS['beta'])
-# ax.set_title(DISTRIBUTIONS['beta']['label'], fontsize=18)
-plt.tight_layout()
-plt.savefig(f'results/plots/interpolation_error_{DISTRIBUTIONS["beta"]["suffix"]}.png', dpi=150, bbox_inches='tight')
-plt.show()
-
-# --- Appendix (b): TruncNormal, TruncGamma, TruncWeibull — standalone figures ---
-appendix_dists = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
-for dist_key, dist_cfg in appendix_dists.items():
-    fig, ax = plt.subplots(figsize=(11, 6))
-    plot_interpolation_error(ax, dist_cfg)
-    plt.tight_layout()
-    plt.savefig(f'results/plots/interpolation_error_{dist_cfg["suffix"]}.png', dpi=150, bbox_inches='tight')
-    plt.show()
-
-"""
-
-#%%
 ###################################################################################
 ###################################################################################
 #######################       EXPERIMENT 1 (MAIN BODY)     ########################
@@ -338,7 +176,7 @@ np.random.seed(42)
 
 a=3
 b_values        = [5, 7, 12]      # Beta(3, b) ground truths to sweep
-total_N_values  = [200, 250, 300, 350, 400,5000]   # total data budgets
+total_N_values  = [250, 300, 1000, 1100, 5000, 5500, 10000]   # total data budgets
 k_values_alloc  = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]           # knot counts to sweep
 num_runs_alloc  = 100   # 100 for paper results
 
@@ -410,7 +248,8 @@ for b_val in b_values:
         ax.fill_between(k_list, y_mean - y_se, y_mean + y_se, alpha=0.12, color=colors[ti])
 
     ax.set_xlabel(r'$k$')
-    ax.set_ylabel(r'$\|F_0 - \hat{F}\|$')
+    ax.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
+    ax.set_ylim(0, 0.5)
     # ax.set_title(f'Beta(3, {b_val})')
     ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
     ax.legend(loc='upper right', ncol=1, columnspacing=0.8, handletextpad=0.4)
@@ -433,7 +272,7 @@ np.random.seed(42)
 
 # Mirrors the Beta computation but uses dist.cdf() from DISTRIBUTIONS
 # instead of beta_dist.cdf(), so it generalizes to TruncNormal, TruncGamma, TruncWeibull.
-total_N_values  = [200, 250, 300, 350, 400, 5000]   # total data budgets
+total_N_values  = [250, 300, 1000, 1100, 5000, 5500, 10000]   # total data budgets
 k_values_alloc  = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]   # knot counts to sweep
 num_runs_alloc  = 100   # 100 for paper results
 
@@ -529,10 +368,11 @@ for dist_key, dist_cfg in appendix_dists.items():
         ax.fill_between(k_list, y_mean - y_se, y_mean + y_se, alpha=0.12, color=colors[ti])
 
     ax.set_xlabel(r'$k$')
-    ax.set_ylabel(r'$\|F_0 - \hat{F}\|$')
+    ax.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
+    ax.set_ylim(0, 0.4)
     # ax.set_title(dist_cfg['label'], fontsize=14)
     ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
-    ax.legend(loc='upper right', ncol=2, columnspacing=0.8, handletextpad=0.4)
+    ax.legend(loc='upper right', ncol=1, columnspacing=0.8, handletextpad=0.4)
     ax.grid(True, linestyle='--', alpha=0.4)
     plt.tight_layout()
     plt.savefig(f'results/plots/knot_allocation_{suffix}.png', dpi=150, bbox_inches='tight')
@@ -679,7 +519,7 @@ for m, label, c, ls in zip(method_keys, method_labels, colors, linestyles):
     ax.plot(n_i_values, y_mean, marker='o', color=c, linestyle=ls, label=label)
     ax.fill_between(n_i_values, y_mean - y_se, y_mean + y_se, alpha=0.15, color=c)   # ±1 SE band
 ax.set_xlabel(r'$n_i$')
-ax.set_ylabel(r'$\|F_0 - \hat{F}\|$')
+ax.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
 ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8])
 ax.grid(True, linestyle='--', alpha=0.4)
 
@@ -694,7 +534,7 @@ for m, label, c, ls in zip(method_keys, method_labels, colors, linestyles):
     ax.plot(k_values, y_mean, marker='o', color=c, linestyle=ls, label=label)
     ax.fill_between(k_values, y_mean - y_se, y_mean + y_se, alpha=0.15, color=c)   # ±1 SE band
 ax.set_xlabel(r'$k$')
-ax.set_ylabel(r'$\|F_0 - \hat{F}\|$')
+ax.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
 ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8])
 ax.grid(True, linestyle='--', alpha=0.4)
 
@@ -937,7 +777,8 @@ for dist_key, dist_cfg in appendix_dists.items():
     data       = np.load(f'results/data/method_comparison_{suffix}.npz')
     k_values   = data['k_values'].tolist()
     n_i_values = data['n_i_values'].tolist()
-    num_runs_  = int(data['num_runs'])
+    num_runs_\
+        = int(data['num_runs'])
     raw_errors = {m: data[f'{m}_errors'] for m in method_keys}
 
     ki_fix = len(k_values) // 2   # middle k (k=3 when k ∈ {1..5})
@@ -955,7 +796,7 @@ for dist_key, dist_cfg in appendix_dists.items():
         ax.plot(n_i_values, y_mean, marker='o', color=c, linestyle=ls, label=label)
         ax.fill_between(n_i_values, y_mean - y_se, y_mean + y_se, alpha=0.15, color=c)
     ax.set_xlabel(r'$n_i$')
-    ax.set_ylabel(r'$\|F_0 - \hat{F}\|$')
+    ax.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
     ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8])
     ax.grid(True, linestyle='--', alpha=0.4)
 
@@ -969,7 +810,7 @@ for dist_key, dist_cfg in appendix_dists.items():
         ax.plot(k_values, y_mean, marker='o', color=c, linestyle=ls, label=label)
         ax.fill_between(k_values, y_mean - y_se, y_mean + y_se, alpha=0.15, color=c)
     ax.set_xlabel(r'$k$')
-    ax.set_ylabel(r'$\|F_0 - \hat{F}\|$')
+    ax.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
     ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8])
     ax.grid(True, linestyle='--', alpha=0.4)
 
