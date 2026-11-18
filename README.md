@@ -15,7 +15,7 @@ Code and data to reproduce the algorithms, numerical experiments and case studie
 
 ```
 .
-├── fitting.py    # Algorithm 1 (fit_cdf) and the discretized-grid benchmarks (fit_cdf_nonconvex, fit_weibull_cdf)
+├── fitting.py    # Algorithm 1 (fit_cdf_ifr) and the discretized-grid benchmarks (fit_cdf_nonconvex, fit_weibull_cdf)
 ├── utils.py      # Interpolation routines and shared numerical helpers
 ├── example.ipynb # Minimal worked example: fit all three methods to one simulated dataset
 ├── numerics.ipynb # Section 6 numerical experiments (convergence rates, knot allocation, method comparison)
@@ -31,7 +31,9 @@ Code and data to reproduce the algorithms, numerical experiments and case studie
 pip install numpy scipy sympy cvxpy mpmath matplotlib tqdm gurobipy
 ```
 
-`fitting.py`'s `fit_cdf` (**Algorithm 1**) only needs CVXPY's default open-source solver — no license required. The **discretized-IFR** and **discretized-non-IFR** benchmarks used throughout for comparison (`fit_cdf_nonconvex`) solve a non-convex program with **Gurobi**, which requires a license (free for academic use at [gurobi.com](https://www.gurobi.com)). If you don't have a license, you can still run every cell that only loads pre-computed results from `results/data/`.
+`fitting.py`'s `fit_cdf_ifr` (**Algorithm 1**) only needs CVXPY's default open-source solver — no license required. The **discretized-IFR** and **discretized-non-IFR** benchmarks used throughout for comparison (`fit_cdf_nonconvex`) solve a non-convex program with **Gurobi**, which requires a license (free for academic use at [gurobi.com](https://www.gurobi.com)). If you don't have a license, you can still run every cell that only loads pre-computed results from `results/data/`.
+
+The figure scripts set `matplotlib`'s `text.usetex=True`, which requires a working LaTeX installation on the system path. If you don't have one, set `text.usetex=False` in the `plt.rcParams.update({...})` block at the top of each script (the figures still render, just with matplotlib's default math fonts).
 
 A couple of cells call `winsound.Beep(...)` to signal when a long-running simulation finishes. This is Windows-only — comment it out (or wrap it in a `try/except`) on macOS/Linux.
 

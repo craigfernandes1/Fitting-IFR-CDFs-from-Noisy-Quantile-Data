@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.stats import beta as beta_dist, truncnorm, gamma as gamma_dist, weibull_min
-from fitting import fit_cdf, l_inf_step_vs_cdf
+from fitting import fit_cdf_ifr, l_inf_step_vs_cdf
 import sympy as sp
 from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
@@ -14,11 +14,14 @@ plt.rcParams.update({
     'xtick.labelsize': 18,
     'ytick.labelsize': 18,
     'legend.fontsize': 18,
+    "text.usetex": True,
+    "font.family": "serif",
+    "text.latex.preamble": r"\usepackage{amsmath}",
 })
 
 os.makedirs('numerical_results', exist_ok=True)
 
-# x_sym is needed to lambdify the sympy Piecewise CDF returned by fit_cdf for numpy evaluation
+# x_sym is needed to lambdify the sympy Piecewise CDF returned by fit_cdf_ifr for numpy evaluation
 x_sym = sp.Symbol('x')
 l, u  = 0, 1
 
@@ -88,10 +91,10 @@ def calculate_error_for_params(n_i, delta, interpolation_method, dist):
     n_trials = n_i * np.ones_like(x_knots, dtype=int)
     y_samples = np.random.binomial(n_trials, true_p)   # simulate observed counts
 
-    fitted = fit_cdf(x_knots, n_trials, y_samples, l, u, interpolation_method)
+    fitted = fit_cdf_ifr(x_knots, n_trials, y_samples, l, u, interpolation_method)
     try:
         fn = sp.lambdify(x_sym, fitted, 'numpy')
-        # fit_cdf returns 1 - exp(t(x)); near u, t → -50 → exp overflows to 0 in numpy — suppress warnings
+        # fit_cdf_ifr returns 1 - exp(t(x)); near u, t → -50 → exp overflows to 0 in numpy — suppress warnings
         with np.errstate(invalid='ignore', over='ignore'):
             vals = fn(_x_fine)
         vals = np.where(np.isfinite(vals), vals, 1.0)   # overflow near u means F ≈ 1
@@ -206,7 +209,7 @@ for b_val in b_values:
 
                 for run_idx in range(num_runs_alloc):
                     y_samp = np.random.binomial(n_trials_alloc, true_p)   # y_i ~ Binomial(n_i, F_0(x_i))
-                    fitted = fit_cdf(x_knots_alloc, n_trials_alloc, y_samp, l, u, 'linear')
+                    fitted = fit_cdf_ifr(x_knots_alloc, n_trials_alloc, y_samp, l, u, 'linear')
                     fn     = sp.lambdify(x_sym, fitted, 'numpy')
                     with np.errstate(invalid='ignore', over='ignore'):
                         vals = np.asarray(fn(x_eval), dtype=float)
@@ -304,7 +307,7 @@ for dist_key, dist_cfg in appendix_dists.items():
 
                 for run_idx in range(num_runs_alloc):
                     y_samp = np.random.binomial(n_trials_alloc, true_p)   # y_i ~ Binomial(n_i, F_0(x_i))
-                    fitted = fit_cdf(x_knots_alloc, n_trials_alloc, y_samp, l, u, 'linear')
+                    fitted = fit_cdf_ifr(x_knots_alloc, n_trials_alloc, y_samp, l, u, 'linear')
                     fn     = sp.lambdify(x_sym, fitted, 'numpy')
                     with np.errstate(invalid='ignore', over='ignore'):
                         vals = np.asarray(fn(x_eval), dtype=float)
@@ -446,7 +449,7 @@ with tqdm(total=total, desc='(k, n_i) settings') as pbar:
                 # Algorithm 1: convex program in t-space (CVXPY), PWL interpolation + analytic tail
                 try:
                     t0 = time.perf_counter()
-                    fitted = fit_cdf(x_knots_mc, n_trials_mc, y_samp, l, u, 'linear')
+                    fitted = fit_cdf_ifr(x_knots_mc, n_trials_mc, y_samp, l, u, 'linear')
                     elapsed = time.perf_counter() - t0
                     fn = sp.lambdify(x_sym, fitted, 'numpy')
                     with np.errstate(invalid='ignore', over='ignore'):
@@ -722,7 +725,7 @@ for dist_key, dist_cfg in appendix_dists.items():
                     # Algorithm 1: convex program in t-space (CVXPY), PWL interpolation + analytic tail
                     try:
                         t0 = time.perf_counter()
-                        fitted = fit_cdf(x_knots_mc, n_trials_mc, y_samp, l, u, 'linear')
+                        fitted = fit_cdf_ifr(x_knots_mc, n_trials_mc, y_samp, l, u, 'linear')
                         elapsed = time.perf_counter() - t0
                         fn = sp.lambdify(x_sym, fitted, 'numpy')
                         with np.errstate(invalid='ignore', over='ignore'):

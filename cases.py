@@ -12,16 +12,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 import sympy as sp
 from scipy.stats import chi2, truncnorm, gamma as gamma_dist, logistic
-from fitting import fit_cdf, fit_cdf_nonconvex, eval_step_cdf, l_inf_step_vs_cdf
+from fitting import fit_cdf_ifr, fit_cdf_nonconvex, eval_step_cdf, l_inf_step_vs_cdf
 from tqdm.auto import tqdm
 import os
 import winsound
 
 plt.rcParams.update({
-    'axes.labelsize':  18,
-    'xtick.labelsize': 16,
-    'ytick.labelsize': 16,
-    'legend.fontsize': 16,
+    'axes.labelsize':  22,
+    'xtick.labelsize': 18,
+    'ytick.labelsize': 18,
+    'legend.fontsize': 18,
+    "text.usetex": True,
+    "font.family": "serif",
+    "text.latex.preamble": r"\usepackage{amsmath}",
 })
 
 os.makedirs('results', exist_ok=True)
@@ -184,7 +187,7 @@ for di, (dist_name, dist_cfg) in enumerate(DISTRIBUTIONS.items()):
 
         # ── Algorithm 1 (PWL, CVXPY) ─────────────────────────────────────────────
         try:
-            fitted = fit_cdf(x_knots, n_trials, y_samples, l, u, 'linear')
+            fitted = fit_cdf_ifr(x_knots, n_trials, y_samples, l, u, 'linear')
             fn     = sp.lambdify(x_sym, fitted, 'numpy')
             with np.errstate(invalid='ignore', over='ignore'):
                 vals = np.asarray(fn(x_fine), dtype=float)
@@ -326,7 +329,7 @@ ax_ex.plot(x_fine, true_rev, 'k-', linewidth=2, label='True', zorder=5)
 ax_ex.axvline(x_fine[true_opt_idx], color='black', linestyle=':', linewidth=1.5, alpha=0.7)
 
 try:
-    fitted = fit_cdf(x_knots, n_trials, y_samples, l, u, 'linear')
+    fitted = fit_cdf_ifr(x_knots, n_trials, y_samples, l, u, 'linear')
     fn = sp.lambdify(x_sym, fitted, 'numpy')
     with np.errstate(invalid='ignore', over='ignore'):
         vals = np.asarray(fn(x_fine), dtype=float)
@@ -597,7 +600,7 @@ for di, (dist_name, dist_cfg) in enumerate(DIST_RELIABILITY.items()):
 
         # ── Algorithm 1 (PWL) ─────────────────────────────────────────────────────
         try:
-            fitted = fit_cdf(x_knots_r, n_trials_r, y_samples, l_r, u_r, 'linear')
+            fitted = fit_cdf_ifr(x_knots_r, n_trials_r, y_samples, l_r, u_r, 'linear')
             fn_raw = sp.lambdify(x_sym, fitted, 'numpy')
             with np.errstate(invalid='ignore', over='ignore'):
                 vals = np.asarray(fn_raw(x_fine_r), dtype=float)
@@ -721,7 +724,7 @@ ax_ex.plot(x_cost_plot, true_cv, 'k-', linewidth=2, label='True', zorder=5)
 ax_ex.axvline(kappa_star_ex, color='black', linestyle=':', linewidth=1.5, alpha=0.7)
 
 try:
-    fitted   = fit_cdf(x_knots_r, n_trials_r, y_samples_ex, l_r, u_r, 'linear')
+    fitted   = fit_cdf_ifr(x_knots_r, n_trials_r, y_samples_ex, l_r, u_r, 'linear')
     fn_raw   = sp.lambdify(x_sym, fitted, 'numpy')
     def fn_s(t, _f=fn_raw):
         with np.errstate(invalid='ignore', over='ignore'):
@@ -824,7 +827,7 @@ for exp_name, exp_dist in EXP_DISTS.items():
 
             # Algorithm 1 (PWL)
             try:
-                fitted_alg   = fit_cdf(x_knots_w, n_trials_w, y_samples, l_w, u_w, 'linear')
+                fitted_alg   = fit_cdf_ifr(x_knots_w, n_trials_w, y_samples, l_w, u_w, 'linear')
                 fn_raw_alg   = sp.lambdify(x_sym, fitted_alg, 'numpy')
                 with np.errstate(invalid='ignore', over='ignore'):
                     vals_alg = np.asarray(fn_raw_alg(x_fine_w), dtype=float)
