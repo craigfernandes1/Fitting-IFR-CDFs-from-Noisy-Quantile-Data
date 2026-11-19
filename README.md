@@ -35,8 +35,6 @@ pip install numpy scipy sympy cvxpy mpmath matplotlib tqdm gurobipy
 
 The figure scripts set `matplotlib`'s `text.usetex=True`, which requires a working LaTeX installation on the system path. If you don't have one, set `text.usetex=False` in the `plt.rcParams.update({...})` block at the top of each script (the figures still render, just with matplotlib's default math fonts).
 
-A couple of cells call `winsound.Beep(...)` to signal when a long-running simulation finishes. This is Windows-only — comment it out (or wrap it in a `try/except`) on macOS/Linux.
-
 ## Notebooks
 
 - **`example.ipynb`** — Fits a single simulated Beta(3, 5) dataset with Algorithm 1, discretized-IFR (multiple grid densities), and discretized-non-IFR, and plots all three CDF estimates against the ground truth and the noisy observations. Start here if you just want to see the method run end-to-end.

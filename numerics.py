@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import time
 import os
 from matplotlib.ticker import FormatStrFormatter
-import winsound
 
 plt.rcParams.update({
     'axes.labelsize':  22,

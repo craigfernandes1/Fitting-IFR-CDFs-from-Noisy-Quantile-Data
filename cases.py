@@ -15,7 +15,6 @@ from scipy.stats import chi2, truncnorm, gamma as gamma_dist, logistic
 from fitting import fit_cdf_ifr, fit_cdf_nonconvex, eval_step_cdf, l_inf_step_vs_cdf
 from tqdm.auto import tqdm
 import os
-import winsound
 
 plt.rcParams.update({
     'axes.labelsize':  22,
@@ -27,14 +26,15 @@ plt.rcParams.update({
     "text.latex.preamble": r"\usepackage{amsmath}",
 })
 
-os.makedirs('results', exist_ok=True)
+os.makedirs('results/plots', exist_ok=True)
+os.makedirs('results/data', exist_ok=True)
 
 
 # ── Problem parameters ──────────────────────────────────────────────────────────
 l, u     = 20, 50.0
 x_knots  = np.array([25.0, 30.0, 35.0])   # sale, regular, high prices
 n_trials = np.array([50, 100, 50])          # observations at each price
-num_runs = 150  # 100 to match the paper
+num_runs = 150  # simulation runs per ground-truth cdf (matches the paper)
 d_ifr    = 2   # Discretized-IFR grid density; d=2 matches Section 7.1 of paper
 
 x_sym     = sp.Symbol('x')
@@ -69,8 +69,10 @@ class TruncatedDist:
 
 
 # All four are IFR (log-concave density) truncated to [l, u] = [20, 50].
-# Chi-squared(df=38) = Gamma(19, scale=2); revenue-optimal price p* ~ 28.
-# Logistic(loc=36, s=5): increasing hazard on the truncated support; p* ~ 28.
+# Revenue-optimal prices p* = argmax p (1 - F0(p)) on the truncated support:
+#   Chi-Sq(38) = Gamma(19, scale=2)   p* ~ 28.1      Gamma(8, 6)       p* ~ 29.1
+#   Normal(38, 6)                     p* ~ 30.3      Logistic(36, 5)   p* ~ 28.0
+# The knots 25/30/35 bracket every p*; the Normal's p* sits on the regular price.
 DISTRIBUTIONS = {
     'ChiSq':    {'label': 'Chi-Sq (df=38)',
                  'display_name': 'Chi-Sq',
@@ -94,6 +96,41 @@ method_labels = {
     'discretized_non_ifr': 'Discretized-non-IFR',
 }
 colors = {'algo1': 'green', 'discretized_ifr': 'red', 'discretized_non_ifr': 'purple'}
+
+
+def grouped_mean_sd_bars(ax, arr_3d, methods, labels, colors, x_pos, width=0.22):
+    """Grouped bar chart of per-group means with +-1 sample-sd error bars.
+
+    Shared by every bar panel in this script (pricing, reliability, Weibull).
+
+    Args:
+        ax: Target axes.
+        arr_3d (np.ndarray): Shape (n_groups, len(methods), n_runs). NaN entries
+            are failed runs and are dropped before averaging.
+        methods (list[str]): Method keys in plotting order (one bar per group).
+        labels (dict): Method key -> legend label.
+        colors (dict): Method key -> bar colour.
+        x_pos (np.ndarray): Group centres on the x-axis.
+        width (float): Centre-to-centre spacing of bars within a group.
+    """
+    n_m     = len(methods)
+    offsets = np.linspace(-(n_m - 1) * width / 2, (n_m - 1) * width / 2, n_m)
+    for j, m in enumerate(methods):
+        means = np.full(len(x_pos), np.nan)
+        sds   = np.full(len(x_pos), np.nan)
+        for g in range(len(x_pos)):
+            vals = arr_3d[g, j, :]
+            vals = vals[np.isfinite(vals)]
+            if vals.size:
+                means[g] = vals.mean()
+                sds[g]   = vals.std(ddof=1) if vals.size > 1 else 0.0
+        ax.bar(
+            x_pos + offsets[j], means, width=width * 0.9,
+            yerr=sds, color=colors[m], alpha=0.7,
+            edgecolor='black', linewidth=0.5,
+            error_kw=dict(ecolor='black', elinewidth=1.2, capsize=3),
+            label=labels[m],
+        )
 
 
 def _l_inf_step(x_nc, F_nc, true_cdf_fn, x_max=None):
@@ -244,32 +281,8 @@ method_keys_list = data['method_keys'].tolist()
 all_errors      = data['all_errors']       # (n_dists, n_methods, num_runs)
 
 n_dists   = len(dist_names_list)
-n_methods = len(method_keys_list)
-width     = 0.22
-offsets   = np.linspace(-(n_methods - 1) * width / 2, (n_methods - 1) * width / 2, n_methods)
 x_pos     = np.arange(n_dists)
 display_names = [DISTRIBUTIONS[k]['display_name'] for k in dist_names_list]
-
-def _add_mean_sd(ax, arr_3d):
-    ## Grouped bar chart of the mean with ± sample-standard-deviation error bars.
-    ## arr_3d shape (n_dists, n_methods, num_runs).
-    bar_w = width * 0.9   # bar width within each distribution group
-    for j, m in enumerate(method_keys_list):
-        means = np.full(n_dists, np.nan)
-        sds   = np.full(n_dists, np.nan)
-        for di in range(n_dists):
-            vals = arr_3d[di, j, :]
-            vals = vals[np.isfinite(vals)]   # drop failed runs
-            if vals.size:
-                means[di] = vals.mean()
-                sds[di]   = vals.std(ddof=1) if vals.size > 1 else 0.0
-        ax.bar(
-            x_pos + offsets[j], means, width=bar_w,
-            yerr=sds, color=colors[m], alpha=0.7,
-            edgecolor='black', linewidth=0.5,
-            error_kw=dict(ecolor='black', elinewidth=1.2, capsize=3),
-            label=method_labels[m],
-        )
 
 # --- Combined pricing figure: full-support error | revenue ratio | illustrative curve ---
 all_revenues = data['all_revenues']
@@ -278,7 +291,7 @@ fig, axes = plt.subplots(1, 3, figsize=(20, 6.5))
 
 # Panel 1: full-support L-inf error (mean ± SD bars)
 ax_full = axes[0]
-_add_mean_sd(ax_full, all_errors)
+grouped_mean_sd_bars(ax_full, all_errors, method_keys_list, method_labels, colors, x_pos)
 ax_full.set_xticks(x_pos)
 ax_full.set_xticklabels(display_names)
 ax_full.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
@@ -288,23 +301,7 @@ ax_full.grid(True, which='both', ls='--')
 
 # Panel 2: revenue ratio (mean ± SD bars)
 ax_ratio = axes[1]
-bar_w = width * 0.9   # bar width within each distribution group
-for j, m in enumerate(method_keys_list):
-    means = np.full(n_dists, np.nan)
-    sds   = np.full(n_dists, np.nan)
-    for di in range(n_dists):
-        vals = all_revenues[di, j, :]
-        vals = vals[np.isfinite(vals)]   # drop failed runs
-        if vals.size:
-            means[di] = vals.mean()
-            sds[di]   = vals.std(ddof=1) if vals.size > 1 else 0.0
-    ax_ratio.bar(
-        x_pos + offsets[j], means, width=bar_w,
-        yerr=sds, color=colors[m], alpha=0.7,
-        edgecolor='black', linewidth=0.5,
-        error_kw=dict(ecolor='black', elinewidth=1.2, capsize=3),
-        label=method_labels[m],
-    )
+grouped_mean_sd_bars(ax_ratio, all_revenues, method_keys_list, method_labels, colors, x_pos)
 
 ax_ratio.axhline(1.0, color='black', linewidth=1, alpha=0.5)
 ax_ratio.set_xticks(x_pos)
@@ -313,11 +310,13 @@ ax_ratio.set_ylabel('Revenue Ratio')
 ax_ratio.set_ylim([-0.05, 1.1])
 ax_ratio.grid(True, which='both', ls='--')
 
-# Panel 3: illustrative Chi-Sq revenue curves (seed 0)
-np.random.seed(0)
+# Panel 3: illustrative revenue curves for one simulated instance (ground truth
+# and seed set just below). The draw is a fresh dataset, not one of the num_runs
+# tallied above; state the family and seed in the figure caption.
+np.random.seed(3)
 ax_ex = axes[2]
 
-ex_dist = DISTRIBUTIONS['ChiSq']['dist']
+ex_dist = DISTRIBUTIONS['Gamma']['dist']
 true_fine = ex_dist.cdf(x_fine)
 true_p    = ex_dist.cdf(x_knots)
 y_samples = np.random.binomial(n_trials, true_p)
@@ -400,8 +399,10 @@ from scipy.stats import weibull_min as weibull_scipy
 # unimodal optimizer is not used because the discretized-benchmark cost is a
 # discontinuous function of kappa. The denominator survival integral is computed
 # exactly (interval by interval) for step cdfs and by cumulative quadrature over
-# consecutive candidate gaps for continuous cdfs; integration warnings are
-# recorded as failures rather than suppressed.
+# consecutive candidate gaps for continuous cdfs. A non-finite segment integral is
+# reported as a failure; a benign roundoff IntegrationWarning on a finite integral
+# is suppressed. A run whose decision cannot be evaluated is recorded as NaN (a
+# dropped run), never as a ratio of zero.
 # ─────────────────────────────────────────────────────────────────────────────
 
 KAPPA_GRID_N    = 1000     # density of the common global candidate grid on [l+0.01, u]
@@ -483,6 +484,16 @@ def cost_continuous_at(cdf_fn, c_p, c_f, l, kappa):
         return np.inf
     return (c_p * (1 - cdf_fn(kappa)) + c_f * cdf_fn(kappa)) / integral
 
+def true_cost_ratio(true_cdf_fn, c_p, c_f, l, cost_star, kappa_hat):
+    ## Cost ratio C(kappa*; F0) / C(kappa_hat; F0) of an estimator's chosen
+    ## replacement age under the ground truth. Raises (so the caller records the
+    ## run as failed, i.e. NaN) when kappa_hat is undefined or its true cost is
+    ## non-finite; without this guard such a run would be stored as a ratio of 0.
+    c_hat = cost_continuous_at(true_cdf_fn, c_p, c_f, l, kappa_hat)
+    if not np.isfinite(c_hat) or c_hat <= 0:
+        raise RuntimeError(f"True cost at kappa_hat={kappa_hat} is not finite and positive.")
+    return cost_star / c_hat
+
 # ── Part 1 parameters ─────────────────────────────────────────────────────────────
 l_r, u_r      = 0.0, 12.0
 x_knots_r     = np.array([2.0, 4.0, 6.0])
@@ -493,14 +504,16 @@ c_p_r, c_f_r  = 300, 1200
 x_fine_r      = np.unique(np.concatenate((np.linspace(l_r + 1e-4, u_r, 3000), x_knots_r, [l_r, u_r])))
 d_ifr_r       = 2
 
-# All four are IFR, truncated to [l_r, u_r] = [0, 12]; knots [2, 4, 6] bracket kappa* ~ 5.
-# Chi-Sq(10) = Gamma(5, scale=2): mode = df-2 = 8
-# Normal(9, 3): mode = 9
-# Gamma(5, scale=2): mode = (alpha-1)*scale = 8
-# Logistic(9, 2): mode = loc = 9; increasing hazard
+# All four are IFR, truncated to [l_r, u_r] = [0, 12]. Optimal replacement ages
+# kappa* = argmin C(kappa; F0) under c_p = 300, c_f = 1200 lie between the 4- and
+# 6-month knots:
+#   Chi-Sq(9)   = Gamma(4.5, scale=2): mode 7,  kappa* ~ 4.4
+#   Normal(9, 3):                      mode 9,  kappa* ~ 5.4
+#   Gamma(5, 2):                       mode 8,  kappa* ~ 4.8
+#   Logistic(9, 2):                    mode 9,  kappa* ~ 5.6  (increasing hazard)
 DIST_RELIABILITY = {
-    'ChiSq':    {'label': 'Chi-Sq (df=10)',        'display_name': 'Chi-Sq',
-                 'dist': TruncatedDist(chi2(10), l_r, u_r)},
+    'ChiSq':    {'label': 'Chi-Sq (df=9)',        'display_name': 'Chi-Sq',
+                 'dist': TruncatedDist(chi2(9), l_r, u_r)},
     'Normal':   {'label': r'Normal ($\mu$=9, $\sigma$=3)', 'display_name': 'Normal',
                  'dist': truncnorm((l_r - 9.0) / 3.0, (u_r - 9.0) / 3.0, loc=9.0, scale=3.0)},
     'Gamma':    {'label': r'Gamma ($\alpha$=5, $\theta$=2)', 'display_name': 'Gamma',
@@ -614,7 +627,7 @@ for di, (dist_name, dist_cfg) in enumerate(DIST_RELIABILITY.items()):
                     return float(np.clip(np.asarray(_f(t), dtype=float).flat[0], 0.0, 1.0))
             cand_alg      = kappa_candidates(l_r, u_r, breakpoints=x_knots_r)
             kappa_alg, _  = best_kappa(cand_alg, costs_continuous(fn_alg, c_p_r, c_f_r, l_r, cand_alg))
-            all_costs_r[di, 0, run] = cost_star / cost_continuous_at(true_cdf_fn, c_p_r, c_f_r, l_r, kappa_alg)
+            all_costs_r[di, 0, run] = true_cost_ratio(true_cdf_fn, c_p_r, c_f_r, l_r, cost_star, kappa_alg)
         except Exception as e:
             print(f"  [{dist_name}, run {run}] algo1 failed: {e}")
 
@@ -627,7 +640,7 @@ for di, (dist_name, dist_cfg) in enumerate(DIST_RELIABILITY.items()):
             all_errors_r[di, 1, run]      = _l_inf_step(x_nc, F_nc, dist.cdf)
             cand_disc     = kappa_candidates(l_r, u_r, breakpoints=x_nc)
             kappa_disc, _ = best_kappa(cand_disc, costs_step(x_nc, F_nc, c_p_r, c_f_r, l_r, cand_disc))
-            all_costs_r[di, 1, run] = cost_star / cost_continuous_at(true_cdf_fn, c_p_r, c_f_r, l_r, kappa_disc)
+            all_costs_r[di, 1, run] = true_cost_ratio(true_cdf_fn, c_p_r, c_f_r, l_r, cost_star, kappa_disc)
         except Exception as e:
             print(f"  [{dist_name}, run {run}] discretized_ifr failed: {e}")
 
@@ -640,7 +653,7 @@ for di, (dist_name, dist_cfg) in enumerate(DIST_RELIABILITY.items()):
             all_errors_r[di, 2, run]      = _l_inf_step(x_ni, F_ni, dist.cdf)
             cand_nifr     = kappa_candidates(l_r, u_r, breakpoints=x_ni)
             kappa_nifr, _ = best_kappa(cand_nifr, costs_step(x_ni, F_ni, c_p_r, c_f_r, l_r, cand_nifr))
-            all_costs_r[di, 2, run] = cost_star / cost_continuous_at(true_cdf_fn, c_p_r, c_f_r, l_r, kappa_nifr)
+            all_costs_r[di, 2, run] = true_cost_ratio(true_cdf_fn, c_p_r, c_f_r, l_r, cost_star, kappa_nifr)
         except Exception as e:
             print(f"  [{dist_name}, run {run}] discretized_non_ifr failed: {e}")
 
@@ -659,37 +672,14 @@ all_errors_r      = data_r['all_errors']
 all_costs_r       = data_r['all_costs']
 
 n_rd  = len(rel_dist_names)
-n_rm  = len(rel_method_keys)
-width = 0.22
-offsets_r       = np.linspace(-(n_rm - 1) * width / 2, (n_rm - 1) * width / 2, n_rm)
 x_pos_r         = np.arange(n_rd)
 display_names_r = [DIST_RELIABILITY[k]['display_name'] for k in rel_dist_names]
-
-def _rel_mean_sd(ax, arr_3d):
-    ## rouped bar chart of the mean with ± sample-standard-deviation error bars.
-    bar_w = width * 0.9
-    for j, m in enumerate(rel_method_keys):
-        means = np.full(n_rd, np.nan)
-        sds   = np.full(n_rd, np.nan)
-        for di in range(n_rd):
-            vals = arr_3d[di, j, :]
-            vals = vals[np.isfinite(vals)]   # drop failed runs
-            if vals.size:
-                means[di] = vals.mean()
-                sds[di]   = vals.std(ddof=1) if vals.size > 1 else 0.0
-        ax.bar(
-            x_pos_r + offsets_r[j], means, width=bar_w,
-            yerr=sds, color=rel_colors[m], alpha=0.7,
-            edgecolor='black', linewidth=0.5,
-            error_kw=dict(ecolor='black', elinewidth=1.2, capsize=3),
-            label=rel_labels[m],
-        )
 
 fig, axes = plt.subplots(1, 3, figsize=(20, 6.5))
 
 # Panel 1: full-support L-inf error (mean ± SD bars)
 ax_full = axes[0]
-_rel_mean_sd(ax_full, all_errors_r)
+grouped_mean_sd_bars(ax_full, all_errors_r, rel_method_keys, rel_labels, rel_colors, x_pos_r)
 ax_full.set_xticks(x_pos_r)
 ax_full.set_xticklabels(display_names_r)
 ax_full.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
@@ -698,7 +688,7 @@ ax_full.grid(True, axis='y', ls='--')
 
 # Panel 2: cost ratio (mean ± SD bars)
 ax_cost = axes[1]
-_rel_mean_sd(ax_cost, all_costs_r)
+grouped_mean_sd_bars(ax_cost, all_costs_r, rel_method_keys, rel_labels, rel_colors, x_pos_r)
 ax_cost.axhline(1.0, color='black', linewidth=1, alpha=0.5)
 ax_cost.set_xticks(x_pos_r)
 ax_cost.set_xticklabels(display_names_r)
@@ -706,8 +696,10 @@ ax_cost.set_ylabel('Cost Ratio')
 ax_cost.set_ylim(0.5, 1.025)
 ax_cost.grid(True, axis='y', ls='--')
 
-# Panel 3: illustrative Chi-Sq cost curves (seed 42)
-np.random.seed(42)
+# Panel 3: illustrative cost curves for one simulated instance (ground truth and
+# seed set just below). The draw is a fresh dataset, not one of the num_runs_r
+# tallied above; state the family and seed in the figure caption.
+np.random.seed(0)
 ax_ex = axes[2]
 ex_dist      = DIST_RELIABILITY['ChiSq']['dist']
 true_p_ex    = ex_dist.cdf(x_knots_r)
@@ -791,22 +783,70 @@ np.random.seed(0)
 # ── Part 2 parameters ─────────────────────────────────────────────────────────────
 l_w, u_w         = 0.0, 100.0
 x_knots_w        = np.array([24.0, 30.0, 36.0])
-n_per_knot_list  = [15,20,25]
+n_per_knot_list  = [30,40, 50]
 num_runs_w       = 150
 c_p_w, c_f_w     = 600, 1800
 x_fine_w         = np.unique(np.concatenate((np.linspace(l_w + 1e-4, u_w, 3000), x_knots_w, [l_w, u_w])))
 
+class TwoPhaseHazardDist:
+    """Two-phase (constant, then linearly increasing) hazard, truncated to [l, u].
+
+    h(x) = h0 + s * max(x - x0, 0): a constant random-failure rate h0 until the
+    wear-out onset age x0, then a hazard rising linearly at rate s. The law is
+    IFR with a continuously differentiable cdf, but its hazard has a kink that a
+    Weibull power-law hazard cannot represent, so a Weibull fitted through the
+    three knots is decision-biased even with unlimited data (the Gamma, Normal
+    and Logistic families are not: their log-log cdf plots are close to linear
+    across three nearby knots, so a Weibull through the knots reproduces the cdf
+    where the replacement decision lives).
+
+    Cumulative hazard H(x) = h0 x + s max(x - x0, 0)^2 / 2; the untruncated cdf
+    1 - exp(-H) is renormalised to [l, u] exactly as TruncatedDist does.
+    """
+    def __init__(self, h0, x0, s, l, u):
+        self.h0, self.x0, self.s = float(h0), float(x0), float(s)
+        self.l, self.u = l, u
+        self._Fl = self._raw_cdf(np.array([l]))[0]
+        self._Fu = self._raw_cdf(np.array([u]))[0]
+
+    def _H(self, x):
+        return self.h0 * x + 0.5 * self.s * np.maximum(x - self.x0, 0.0) ** 2
+
+    def _raw_cdf(self, x):
+        return 1.0 - np.exp(-self._H(x))
+
+    def hazard(self, x):
+        x = np.asarray(x, dtype=float)
+        return self.h0 + self.s * np.maximum(x - self.x0, 0.0)
+
+    def cdf(self, x):
+        x = np.asarray(x, dtype=float)
+        return np.clip((self._raw_cdf(x) - self._Fl) / (self._Fu - self._Fl), 0.0, 1.0)
+
+    def pdf(self, x):
+        x = np.asarray(x, dtype=float)
+        return np.where(
+            (x >= self.l) & (x <= self.u),
+            self.hazard(x) * np.exp(-self._H(x)) / (self._Fu - self._Fl),
+            0.0,
+        )
+
+
 # Experiment 1: Weibull(shape=5, scale=30) truncated to [0,100] — correct spec
 #   mode = 30*(4/5)^(1/5) ≈ 28.7 months; F(100) ≈ 1 so truncation is negligible
-# Experiment 2: Gamma(alpha=8, scale=6) truncated to [0,100] — misspecification
-#   mode = (8-1)*6 = 42 months; mean = 48; F(100) ≈ 0.9987
+# Experiment 2: two-phase hazard h(x) = 0.005 + 0.02 (x - 28)^+ on [0,100] —
+#   misspecification. Random failures at rate 0.005/month until wear-out begins
+#   at 28 months; F0(knots) ≈ 0.11, 0.17, 0.56; kappa* ≈ 28.9 (between the knots).
+#   Infinite-data decision cost ratio of the Weibull probability-plot fit ≈ 0.93
+#   versus ≈ 0.99 for Algorithm 1; the Weibull fit fails (non-increasing
+#   proportions) in < 0.4% of runs at n_i = 15.
 EXP_DISTS = {
-    'Weibull': TruncatedDist(weibull_scipy(5, scale=30.0), l_w, u_w),
-    'Gamma':   TruncatedDist(gamma_dist(8, scale=6.0),    l_w, u_w),
+    'Weibull':  TruncatedDist(weibull_scipy(5, scale=30.0), l_w, u_w),
+    'TwoPhase': TwoPhaseHazardDist(h0=0.005, x0=28.0, s=0.02, l=l_w, u=u_w),
 }
 
 results_exp = {name: {} for name in EXP_DISTS}
-
+#%%
 for exp_name, exp_dist in EXP_DISTS.items():
     true_cdf_fn_w = lambda t, _d=exp_dist: float(np.clip(_d.cdf(np.array([t])), 0, 1).flat[0])
     true_p_w      = exp_dist.cdf(x_knots_w)
@@ -821,6 +861,7 @@ for exp_name, exp_dist in EXP_DISTS.items():
         n_trials_w = n * np.ones(len(x_knots_w), dtype=int)
         ratios_alg, ratios_weib = [], []
         errors_alg, errors_weib = [], []
+        n_fail_alg, n_fail_weib = 0, 0
 
         for _ in tqdm(range(num_runs_w), desc=f"{exp_name} n={n}", leave=False):
             y_samples = np.random.binomial(n_trials_w, true_p_w)
@@ -841,12 +882,18 @@ for exp_name, exp_dist in EXP_DISTS.items():
                         return float(np.clip(np.asarray(_f(t), dtype=float).flat[0], 0.0, 1.0))
                 cand_alg_w   = kappa_candidates(l_w, u_w, breakpoints=x_knots_w)
                 kappa_alg, _ = best_kappa(cand_alg_w, costs_continuous(fn_alg, c_p_w, c_f_w, l_w, cand_alg_w))
-                ratios_alg.append(cost_star_w / cost_continuous_at(true_cdf_fn_w, c_p_w, c_f_w, l_w, kappa_alg))
+                ratios_alg.append(true_cost_ratio(true_cdf_fn_w, c_p_w, c_f_w, l_w, cost_star_w, kappa_alg))
             except Exception as e:
-                errors_alg.append(np.nan)
+                n_fail_alg += 1
+                # The error may already have been appended if the failure occurred
+                # in the decision step; keep the two lists aligned run by run.
+                if len(errors_alg) < len(ratios_alg) + 1:
+                    errors_alg.append(np.nan)
                 ratios_alg.append(np.nan)
 
-            # Weibull Regression
+            # Weibull Regression. fit_weibull_cdf raises on a degenerate probability
+            # plot (non-positive log-log slope, i.e. empirical proportions that do
+            # not increase in x); such runs are counted and dropped.
             try:
                 fitted_weib   = fit_weibull_cdf(x_knots_w, n_trials_w, y_samples, l_w, u_w, x_sym)
                 fn_raw_weib   = sp.lambdify(x_sym, fitted_weib, 'numpy')
@@ -857,16 +904,23 @@ for exp_name, exp_dist in EXP_DISTS.items():
                 errors_weib.append(float(np.max(np.abs(vals_weib - true_fine_w))))
                 cand_weib_w   = kappa_candidates(l_w, u_w)
                 kappa_weib, _ = best_kappa(cand_weib_w, costs_continuous(fn_weib, c_p_w, c_f_w, l_w, cand_weib_w))
-                ratios_weib.append(cost_star_w / cost_continuous_at(true_cdf_fn_w, c_p_w, c_f_w, l_w, kappa_weib))
+                ratios_weib.append(true_cost_ratio(true_cdf_fn_w, c_p_w, c_f_w, l_w, cost_star_w, kappa_weib))
             except Exception as e:
-                errors_weib.append(np.nan)
+                n_fail_weib += 1
+                if len(errors_weib) < len(ratios_weib) + 1:   # as above
+                    errors_weib.append(np.nan)
                 ratios_weib.append(np.nan)
+
+        print(f"  {exp_name}, n_i={n}: failed runs  Algorithm 1 = {n_fail_alg}/{num_runs_w}, "
+              f"Weibull regression = {n_fail_weib}/{num_runs_w}")
 
         results_exp[exp_name][n] = {
             'algo1':          np.array(ratios_alg),
             'weibull':        np.array(ratios_weib),
             'errors_algo1':   np.array(errors_alg),
             'errors_weibull': np.array(errors_weib),
+            'n_failed_algo1':   n_fail_alg,
+            'n_failed_weibull': n_fail_weib,
         }
 
 np.savez('results/data/reliability_case_study_weibull.npz',
@@ -874,31 +928,27 @@ np.savez('results/data/reliability_case_study_weibull.npz',
     n_values=np.array(n_per_knot_list),
     **{f'{en}_{n}_{k}': results_exp[en][n][k]
        for en in EXP_DISTS for n in n_per_knot_list
-       for k in ['algo1', 'weibull', 'errors_algo1', 'errors_weibull']},
+       for k in ['algo1', 'weibull', 'errors_algo1', 'errors_weibull',
+                 'n_failed_algo1', 'n_failed_weibull']},
 )
 print('Saved results/data/reliability_case_study_weibull.npz')
 
 #%%
 
+# Ground-truth figure for Part 2. Reuses EXP_DISTS from the experiment cell; only
+# the plotting labels and colours are defined here.
 x_plot_w = np.linspace(0.0, 105.0, 1000)
 x_cost_w = np.linspace(0.5, u_w, 500)
 
-EXP_DISTS = {
-    'Weibull': TruncatedDist(weibull_scipy(5, scale=30.0), l_w, u_w),
-    'Gamma':   TruncatedDist(gamma_dist(8, scale=6.0),    l_w, u_w),
-}
-
-results_exp = {name: {} for name in EXP_DISTS}
-
 dist_cfg = {
     'Weibull': {
-        'dist':  TruncatedDist(weibull_scipy(5, scale=30.0), l_w, u_w),
+        'dist':  EXP_DISTS['Weibull'],
         'label': r'Weibull(shape$=5$, scale$=30$)  [mode $\approx 28.7$, mean $\approx 27.5$]',
         'color': 'steelblue'
     },
-    'Gamma': {
-        'dist':  TruncatedDist(gamma_dist(8, scale=6.0), l_w, u_w),
-        'label': r'Gamma($\alpha=8$, $\theta=6$)  [mode $= 42$, mean $= 48$]',
+    'TwoPhase': {
+        'dist':  EXP_DISTS['TwoPhase'],
+        'label': r'Two-phase hazard $h(x) = 0.005 + 0.02\,(x-28)^+$  [$\kappa^* \approx 28.9$]',
         'color': 'darkorange'
     },
 }
@@ -965,36 +1015,31 @@ data_w  = np.load('results/data/reliability_case_study_weibull.npz', allow_pickl
 exp_names_w  = data_w['exp_names'].tolist()
 n_values_w   = data_w['n_values'].tolist()
 
+weib_methods = ['weibull', 'algo1']
+weib_labels  = {'weibull': 'Weibull Regression', 'algo1': 'Algorithm 1'}
+weib_colors  = {'weibull': 'steelblue', 'algo1': 'green'}
+
 for exp_name in exp_names_w:
+    # Dropped (failed) runs per sample size, as recorded by the experiment cell.
+    for n in n_values_w:
+        print(f"{exp_name}, n_i={n}: dropped runs  Algorithm 1 = {int(data_w[f'{exp_name}_{n}_n_failed_algo1'])}, "
+              f"Weibull regression = {int(data_w[f'{exp_name}_{n}_n_failed_weibull'])}")
+
     fig, ax = plt.subplots(figsize=(8, 6))
-    n_nv  = len(n_values_w)
-    x_pos = np.arange(n_nv)
-    bw    = 0.38
+    x_pos = np.arange(len(n_values_w))
 
-    def _mean_sd(key):
-        means, sds = [], []
-        for n in n_values_w:
-            vals = data_w[f'{exp_name}_{n}_{key}']
-            vals = vals[np.isfinite(vals)]   # drop failed runs
-            means.append(vals.mean() if vals.size else np.nan)
-            sds.append(vals.std(ddof=1) if vals.size > 1 else 0.0)
-        return np.array(means), np.array(sds)
-
-    m_weib, s_weib = _mean_sd('weibull')
-    m_alg,  s_alg  = _mean_sd('algo1')
-
-    ax.bar(x_pos - bw / 2, m_weib, width=bw, yerr=s_weib, color='steelblue', alpha=0.7,
-           edgecolor='black', linewidth=0.5,
-           error_kw=dict(ecolor='black', elinewidth=1.2, capsize=3), label='Weibull Regression')
-    ax.bar(x_pos + bw / 2, m_alg, width=bw, yerr=s_alg, color='green', alpha=0.7,
-           edgecolor='black', linewidth=0.5,
-           error_kw=dict(ecolor='black', elinewidth=1.2, capsize=3), label='Algorithm 1')
+    # Shape (n_sample_sizes, n_methods, num_runs) for the shared bar helper.
+    ratios = np.stack([
+        np.stack([data_w[f'{exp_name}_{n}_{m}'] for m in weib_methods])
+        for n in n_values_w
+    ])
+    grouped_mean_sd_bars(ax, ratios, weib_methods, weib_labels, weib_colors, x_pos, width=0.38)
 
     ax.axhline(1.0, color='black',  linewidth=1, alpha=0.7)
     ax.set_xticks(x_pos)
     ax.set_xticklabels([f'$n_i = {n}$' for n in n_values_w])
     ax.set_ylabel('Cost Ratio')
-    ax.set_ylim(0.5, 1.15)
+    ax.set_ylim(0.5, 1.02)
     ax.grid(True, axis='y', ls='--')
 
     # Legend floating below the figure, single column

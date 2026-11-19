@@ -1492,6 +1492,8 @@ def fit_weibull_cdf(x, n, y, l, u, x_sym):
 
     Estimates Weibull shape and scale parameters by log-log linearization of the
     empirical quantiles followed by ordinary least-squares regression on log(x).
+    Boundary proportions (y_i = 0 or y_i = n_i) are replaced by a half-count,
+    i.e. y_i/n_i is clipped to [1/(2 n_i), 1 - 1/(2 n_i)], before the transform.
     The resulting Weibull CDF is normalized to the truncated support [l, u] so
     that F(l) = 0 and F(u) = 1.
 
@@ -1515,8 +1517,16 @@ def fit_weibull_cdf(x, n, y, l, u, x_sym):
             log-log space. The caller should treat such a fit as a failed run.
     """
 
-    # linear regression set up
-    F_hat = np.clip(y / n, 1e-8, 1 - 1e-8)  # if its exactly 0 or 1, we clip it to avoid log(0)
+    # Probability-plot transform of the empirical proportions. An all-failure or
+    # all-success knot (y_i = 0 or y_i = n_i) has no finite transform, so it is
+    # replaced by a half-count: y_i/n_i is clipped to [1/(2 n_i), 1 - 1/(2 n_i)].
+    # This is the usual boundary correction for a probability plot and keeps the
+    # transformed value on the scale of the data (a clip to 1 - 1e-8 maps to 2.9
+    # in log(-log(1 - F)) space, far above any attainable interior value, which
+    # would dominate a three-point regression).
+    y = np.asarray(y, dtype=float)
+    n = np.asarray(n, dtype=float)
+    F_hat = np.clip(y / n, 0.5 / n, 1.0 - 0.5 / n)
     y_regress = np.log(-np.log(1 - F_hat))
     res = linregress(np.log(x), y_regress)
 
