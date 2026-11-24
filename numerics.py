@@ -473,7 +473,8 @@ for gi, ki in enumerate(k_indices):
         row_colors.append([shade[gi % len(shade)]] * len(method_keys))
 
 n_rows = len(k_indices) * len(n_i_indices)
-fig, ax = plt.subplots(figsize=(12, 0.5 + n_rows * 0.55))
+# Explicit white background: IDE dark themes make the figure transparent, which hides the table
+fig, ax = plt.subplots(figsize=(12, 0.5 + n_rows * 0.55), facecolor='white')
 ax.axis('off')
 
 tbl = ax.table(
@@ -489,12 +490,16 @@ tbl.set_fontsize(10)
 tbl.scale(1.2, 1.6)
 
 for (row, col), cell in tbl.get_celld().items():
+    # Explicit black text: IDE dark themes set text.color to white, which makes the
+    # entries invisible on the white and light-grey rows
+    cell.set_text_props(color='black')
     if row == 0:
         cell.set_text_props(fontweight='bold')
 
-ax.set_title('Mean Solution Time (s)  —  mean ± std (failures if > 0)', fontsize=12, pad=12)
+# '>' must be in math mode under text.usetex, otherwise LaTeX typesets it as an inverted question mark
+ax.set_title(r'Mean Solution Time (s)  —  mean ± std (failures if $>$ 0)', fontsize=12, color='black', pad=12)
 plt.tight_layout()
-plt.savefig('results/plots/method_comparison_beta_table.png', dpi=150, bbox_inches='tight')
+plt.savefig('results/plots/method_comparison_beta_table.png', dpi=150, bbox_inches='tight', facecolor='white')
 plt.show()
 
 # --- LaTeX table ---
@@ -525,13 +530,14 @@ for row_idx, row in enumerate(cell_text):
 
 lines += [
     r'\bottomrule', r'\end{tabular}',
-    r'\caption{\normalfont Mean solution times in seconds for the estimation methods under the ground-truth cdf $F_0\sim\text{Beta}(3,5)$. Cells report mean $\pm$ standard deviation; parenthetical values report the number of failures and are shown only when positive.}',
+    # Caption wording matches the manuscript's Table 1 (tab:solve_times).
+    r'\caption{\normalfont Mean solution times, in seconds, for the estimation methods under the ground-truth cdf $F_0\sim\text{Beta}(3,5)$. Unsolved instances are assigned a solution time of 300 seconds. Cells report the mean $\pm$ standard deviation; parenthetical values, shown only when positive, report the number of unsolved instances.}',
     r'\label{tab:solve_times}', r'\end{table}',
 ]
 
 with open('results/plots/method_comparison_table.tex', 'w') as f:
     f.write('\n'.join(lines))
-print('Saved method_comparison_table.png and method_comparison_beta_table.tex')
+print('Saved method_comparison_beta_table.png and method_comparison_table.tex')
 
 #%%
 
