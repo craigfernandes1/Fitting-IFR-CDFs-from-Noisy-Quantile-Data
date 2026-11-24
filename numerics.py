@@ -260,125 +260,6 @@ for b_val in b_values:
     plt.savefig(f'results/plots/knot_allocation_beta_a3_b{b_val}.png', dpi=150)
     plt.show()
 
-#%%
-###################################################################################
-###################################################################################
-#######################       EXPERIMENT 1 (APPENDIX)     #########################
-###################################################################################
-###################################################################################
-###################################################################################
-#%%
-
-
-np.random.seed(42)
-
-# Mirrors the Beta computation but uses dist.cdf() from DISTRIBUTIONS
-# instead of beta_dist.cdf(), so it generalizes to TruncNormal, TruncGamma, TruncWeibull.
-total_N_values  = [250, 300, 1000, 1100, 5000, 5500, 10000]   # total data budgets
-k_values_alloc  = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]   # knot counts to sweep
-num_runs_alloc  = 100   # 100 for paper results
-
-appendix_dists = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
-
-t_start = time.perf_counter()
-for dist_key, dist_cfg in appendix_dists.items():
-    dist      = dist_cfg['dist']
-    shape     = (len(total_N_values), len(k_values_alloc), num_runs_alloc)
-    errors    = np.full(shape, np.nan)   # 3D array indexed by (total_N_idx, k_idx, run_idx)
-
-    with tqdm(total=len(total_N_values) * len(k_values_alloc), desc=dist_key) as pbar:
-        for ti, total_N in enumerate(total_N_values):
-            for ki, k in enumerate(k_values_alloc):
-                pbar.set_postfix(total_N=total_N, k=k)
-                n_per_knot     = max(1, total_N // k)             # equal allocation: ⌊N/k⌋ per knot
-                x_knots_alloc  = np.linspace(l, u, k + 2)[1:-1]  # k equidistant interior knots
-                true_p         = dist.cdf(x_knots_alloc)
-                n_trials_alloc = n_per_knot * np.ones(k, dtype=int)
-
-                # Sup-norm grid: a dense grid plus the fitted knots and both endpoints, so the
-                # approximation cannot miss an endpoint or fitted-knot discrepancy
-                x_eval    = np.unique(np.concatenate((
-                    np.linspace(l, u, 10_001),
-                    x_knots_alloc,
-                    [l, u],
-                )))
-                true_eval = dist.cdf(x_eval)
-
-                for run_idx in range(num_runs_alloc):
-                    y_samp = np.random.binomial(n_trials_alloc, true_p)   # y_i ~ Binomial(n_i, F_0(x_i))
-                    fitted = fit_cdf_ifr(x_knots_alloc, n_trials_alloc, y_samp, l, u, 'linear')
-                    fn     = sp.lambdify(x_sym, fitted, 'numpy')
-                    with np.errstate(invalid='ignore', over='ignore'):
-                        vals = np.asarray(fn(x_eval), dtype=float)
-                    # The analytic-tail reconstruction should produce finite cdf values;
-                    # a nonfinite value is a numerical failure worth detecting, not masking
-                    if not np.all(np.isfinite(vals)):
-                        raise RuntimeError("Nonfinite fitted-cdf evaluation.")
-                    errors[ti, ki, run_idx] = np.max(np.abs(np.clip(vals, 0.0, 1.0) - true_eval))
-                pbar.update(1)
-
-    suffix = dist_cfg['suffix']
-    np.savez(f'results/data/knot_allocation_{suffix}.npz',
-             total_N_values=total_N_values, k_values=k_values_alloc,
-             num_runs=num_runs_alloc, errors=errors)
-    print(f'Saved knot_allocation_{suffix}.npz')
-
-print(f'Total time: {time.perf_counter() - t_start:.1f}s')
-
-#%%
-
-appendix_dists = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
-
-for dist_key, dist_cfg in appendix_dists.items():
-    fig, ax = plt.subplots(figsize=(8, 6))
-    x_fine = np.linspace(l, u, 500)
-    dist   = dist_cfg['dist']
-    ax.plot(x_fine, dist.cdf(x_fine), 'black', linewidth=2)
-    # for k_mark in [2, 3, 4]:
-    #     x_k = np.linspace(l, u, k_mark + 2)[1:-1]   # k equidistant interior knots, excluding l and u
-    #     ax.scatter(x_k, dist.cdf(x_k),
-    #                zorder=5, s=300, marker='x', linewidths=4, label=f'$k={k_mark}$')
-    ax.set_xlabel(r'$x$')
-    ax.set_ylabel(r'$F_0$')
-    ax.grid(True, linestyle='--', alpha=0.4)
-    ax.legend(loc='lower right')
-    plt.tight_layout()
-    plt.savefig(f'results/plots/distribution_{dist_cfg["suffix"]}.png', dpi=150, bbox_inches='tight')
-    plt.show()
-
-#%%
-
-appendix_dists = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
-
-for dist_key, dist_cfg in appendix_dists.items():
-    suffix       = dist_cfg['suffix']
-    data         = np.load(f'results/data/knot_allocation_{suffix}.npz')
-    total_N_list = data['total_N_values'].tolist()
-    k_list       = data['k_values'].tolist()
-    num_runs_    = int(data['num_runs'])
-    errors       = data['errors']   # shape (len_totalN, len_k, num_runs)
-
-    cmap   = plt.cm.viridis
-    colors = [cmap(i / max(len(total_N_list) - 1, 1)) for i in range(len(total_N_list))]
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-    for ti, total_N in enumerate(total_N_list):
-        with np.errstate(all='ignore'):
-            y_mean = np.nanmean(errors[ti, :, :], axis=1)
-            y_se   = np.nanstd( errors[ti, :, :], axis=1, ddof=1) / np.sqrt(num_runs_)
-        ax.plot(k_list, y_mean, marker='o', color=colors[ti], label=f'$N={total_N}$')
-        ax.fill_between(k_list, y_mean - y_se, y_mean + y_se, alpha=0.12, color=colors[ti])
-
-    ax.set_xlabel(r'$k$')
-    ax.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
-    ax.set_ylim(0, 0.4)
-    # ax.set_title(dist_cfg['label'], fontsize=14)
-    ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
-    ax.legend(loc='upper right', ncol=1, columnspacing=0.8, handletextpad=0.4)
-    ax.grid(True, linestyle='--', alpha=0.4)
-    plt.tight_layout()
-    plt.savefig(f'results/plots/knot_allocation_{suffix}.png', dpi=150, bbox_inches='tight')
-    plt.show()
 
 #%%
 ###################################################################################
@@ -653,171 +534,300 @@ with open('results/plots/method_comparison_table.tex', 'w') as f:
 print('Saved method_comparison_table.png and method_comparison_beta_table.tex')
 
 #%%
-###################################################################################
-###################################################################################
-#######################       EXPERIMENT 2 (APPENDIX)     #########################
-###################################################################################
-###################################################################################
-###################################################################################
-#%%
 
-from fitting import fit_cdf_nonconvex
+########################################################################################
+########################################################################################
 
-np.random.seed(0)
-
-k_values_mc   = list(range(1, 6))
-n_i_values_mc = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 25, 30, 35, 40, 45, 50, 70, 90, 110, 130, 150]
-num_runs_mc   = 25   # reduce for testing
-d_values      = [2, 4, 6]   # inter-knot grid points for Discretized-IFR (higher d → finer grid, harder problem)
-
-# k_values_mc   = [3,5]    # k ∈ {1, 2, 3, 4, 5} knots
-# n_i_values_mc = [2, 10, 25, 150]
-# num_runs_mc   = 2                   # Monte Carlo replications per (k, n_i) setting
-# d_values      = [1,2]           # inter-knot grid points for Discretized-IFR (Section 6.3)
-
-
-appendix_dists = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
-
-method_names = ['algo1'] + [f'discretized_ifr_{d}' for d in d_values] + ['discretized_non_ifr']
-
-t_start = time.perf_counter()
-for dist_key, dist_cfg in appendix_dists.items():
-    dist = dist_cfg['dist']
-
-    shape      = (len(k_values_mc), len(n_i_values_mc), num_runs_mc)
-    all_times  = {m: np.full(shape, np.nan) for m in method_names}
-    all_errors = {m: np.full(shape, np.nan) for m in method_names}
-
-    with tqdm(total=len(k_values_mc) * len(n_i_values_mc), desc=dist_key) as pbar:
-        for ki, k in enumerate(k_values_mc):
-            x_knots_mc = np.linspace(l, u, k + 2)[1:-1]   # k equidistant interior knots
-
-            # Sup-norm grid: a dense grid plus the fitted knots and both endpoints, so the
-            # Algorithm 1 L-inf error cannot miss an endpoint or fitted-knot discrepancy
-            x_eval_mc    = np.unique(np.concatenate((
-                np.linspace(l, u, 10_001),
-                x_knots_mc,
-                [l, u],
-            )))
-            true_eval_mc = dist.cdf(x_eval_mc)         # true CDF on the sup-norm grid
-            true_p       = dist.cdf(x_knots_mc)        # true CDF at knots; constant across n_i and runs
-
-            for ni, n_i in enumerate(n_i_values_mc):
-                pbar.set_postfix(k=k, n_i=n_i)
-                n_trials_mc = n_i * np.ones(k, dtype=int)   # same trial budget for every run at this (k, n_i)
-                for run_idx in range(num_runs_mc):
-                    y_samp      = np.random.binomial(n_trials_mc, true_p)   # y_i ~ Binomial(n_i, F_0(x_i))
-
-                    # Discretized-IFR (Gurobi): try d values in increasing order; break on first failure
-                    # because larger d makes the bilinear program harder and will also fail
-                    for dval in d_values:
-                        key = f'discretized_ifr_{dval}'
-                        t0  = time.perf_counter()
-                        try:
-                            x_nc, F_nc = fit_cdf_nonconvex(x_knots_mc, n_trials_mc, y_samp, l, u, dval,
-                                                            ifr_constraint=True, verbose=False, return_type='values')
-                            all_errors[key][ki, ni, run_idx] = _l_inf_step_dist(x_nc, F_nc, dist)
-                            all_times[key][ki, ni, run_idx]  = time.perf_counter() - t0
-                        except Exception:
-                            break   # leave remaining d values as nan and move on
-
-                    # Algorithm 1: convex program in t-space (CVXPY), PWL interpolation + analytic tail
-                    try:
-                        t0 = time.perf_counter()
-                        fitted = fit_cdf_ifr(x_knots_mc, n_trials_mc, y_samp, l, u, 'linear')
-                        elapsed = time.perf_counter() - t0
-                        fn = sp.lambdify(x_sym, fitted, 'numpy')
-                        with np.errstate(invalid='ignore', over='ignore'):
-                            algo1_vals = np.asarray(fn(x_eval_mc), dtype=float)
-                        # The analytic-tail reconstruction should produce finite cdf values;
-                        # a nonfinite value is a numerical failure worth surfacing, not masking
-                        if not np.all(np.isfinite(algo1_vals)):
-                            raise RuntimeError("Nonfinite fitted-cdf evaluation.")
-                        all_times['algo1'][ki, ni, run_idx]  = elapsed
-                        all_errors['algo1'][ki, ni, run_idx] = np.max(np.abs(np.clip(algo1_vals, 0.0, 1.0) - true_eval_mc))
-                    except Exception as exc:
-                        # Record the failure as NaN and keep the sweep running, but surface it loudly
-                        # so a genuine numerical problem is not silently ignored.
-                        print(f"WARNING: Algorithm 1 failed at dist={dist_key}, k={k}, n_i={n_i}, run={run_idx}: {exc}")
-
-                    # Discretized-non-IFR (Gurobi): monotonicity only, no IFR; d=0 uses knots only
-                    try:
-                        t0 = time.perf_counter()
-                        x_ni, F_ni = fit_cdf_nonconvex(x_knots_mc, n_trials_mc, y_samp, l, u, 0,
-                                                        ifr_constraint=False, verbose=False, return_type='values')
-                        all_times['discretized_non_ifr'][ki, ni, run_idx]  = time.perf_counter() - t0
-                        all_errors['discretized_non_ifr'][ki, ni, run_idx] = _l_inf_step_dist(x_ni, F_ni, dist)
-                    except Exception:
-                        pass
-
-                pbar.update(1)
-
-    suffix = dist_cfg['suffix']
-    np.savez(f'results/data/method_comparison_{suffix}.npz',
-        k_values=k_values_mc, n_i_values=n_i_values_mc, num_runs=num_runs_mc, d_values=d_values,
-        **{f'{m}_errors': all_errors[m] for m in method_names},
-        **{f'{m}_times':  all_times[m]  for m in method_names},
-    )
-    print(f'Saved method_comparison_{suffix}.npz')
-
-print(f'Total time: {time.perf_counter() - t_start:.1f}s')
-
-#%%
-
-appendix_dists  = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
-d_values        = [2,4,6]
-nc_linestyles   = ['-', '--', ':', '-.', (0, (3, 1, 1, 1))]
-method_keys     = ['algo1'] + [f'discretized_ifr_{d}' for d in d_values] + ['discretized_non_ifr']
-method_labels   = (['Algorithm 1']
-                   + [f'Discretized-IFR ($d={d}$)' for d in d_values]
-                   + ['Discretized-non-IFR'])
-colors_mc       = ['green'] + ['red'] * len(d_values) + ['purple']
-linestyles_mc   = ['-'] + nc_linestyles[:len(d_values)] + ['-']
-
-for dist_key, dist_cfg in appendix_dists.items():
-    suffix     = dist_cfg['suffix']
-    data       = np.load(f'results/data/method_comparison_{suffix}.npz')
-    k_values   = data['k_values'].tolist()
-    n_i_values = data['n_i_values'].tolist()
-    num_runs_\
-        = int(data['num_runs'])
-    raw_errors = {m: data[f'{m}_errors'] for m in method_keys}
-
-    ki_fix = len(k_values) // 2   # middle k (k=3 when k ∈ {1..5})
-    ni_fix = -1                    # largest n_i in sweep
-
-    fig, axes = plt.subplots(1, 2, figsize=(13, 6))
-
-    # LHS: vary n_i at fixed k
-    ax = axes[0]
-    for m, label, c, ls in zip(method_keys, method_labels, colors_mc, linestyles_mc):
-        slice_ = raw_errors[m][ki_fix, :, :]   # shape (len_n_i, num_runs)
-        with np.errstate(all='ignore'):
-            y_mean = np.nanmean(slice_, axis=1)
-            y_se   = np.nanstd( slice_, axis=1, ddof=1) / np.sqrt(num_runs_)
-        ax.plot(n_i_values, y_mean, marker='o', color=c, linestyle=ls, label=label)
-        ax.fill_between(n_i_values, y_mean - y_se, y_mean + y_se, alpha=0.15, color=c)
-    ax.set_xlabel(r'$n_i$')
-    ax.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
-    ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8])
-    ax.grid(True, linestyle='--', alpha=0.4)
-
-    # RHS: vary k at fixed n_i
-    ax = axes[1]
-    for m, label, c, ls in zip(method_keys, method_labels, colors_mc, linestyles_mc):
-        slice_ = raw_errors[m][:, ni_fix, :]   # shape (len_k, num_runs)
-        with np.errstate(all='ignore'):
-            y_mean = np.nanmean(slice_, axis=1)
-            y_se   = np.nanstd( slice_, axis=1, ddof=1) / np.sqrt(num_runs_)
-        ax.plot(k_values, y_mean, marker='o', color=c, linestyle=ls, label=label)
-        ax.fill_between(k_values, y_mean - y_se, y_mean + y_se, alpha=0.15, color=c)
-    ax.set_xlabel(r'$k$')
-    ax.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
-    ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8])
-    ax.grid(True, linestyle='--', alpha=0.4)
-
-    handles, labels_ = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels_, loc='lower center', ncol=3, bbox_to_anchor=(0.5, -0.02))
-    plt.tight_layout(rect=[0, 0.15, 1, 1])
-    plt.savefig(f'results/plots/method_comparison_appendix_{suffix}.png', dpi=150, bbox_inches='tight')
-    plt.show()
+#
+# #%%
+# ###################################################################################
+# ###################################################################################
+# #######################       EXPERIMENT 1 (APPENDIX)     #########################
+# ###################################################################################
+# ###################################################################################
+# ###################################################################################
+# #%%
+#
+#
+# np.random.seed(42)
+#
+# # Mirrors the Beta computation but uses dist.cdf() from DISTRIBUTIONS
+# # instead of beta_dist.cdf(), so it generalizes to TruncNormal, TruncGamma, TruncWeibull.
+# total_N_values  = [250, 300, 1000, 1100, 5000, 5500, 10000]   # total data budgets
+# k_values_alloc  = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]   # knot counts to sweep
+# num_runs_alloc  = 100   # 100 for paper results
+#
+# appendix_dists = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
+#
+# t_start = time.perf_counter()
+# for dist_key, dist_cfg in appendix_dists.items():
+#     dist      = dist_cfg['dist']
+#     shape     = (len(total_N_values), len(k_values_alloc), num_runs_alloc)
+#     errors    = np.full(shape, np.nan)   # 3D array indexed by (total_N_idx, k_idx, run_idx)
+#
+#     with tqdm(total=len(total_N_values) * len(k_values_alloc), desc=dist_key) as pbar:
+#         for ti, total_N in enumerate(total_N_values):
+#             for ki, k in enumerate(k_values_alloc):
+#                 pbar.set_postfix(total_N=total_N, k=k)
+#                 n_per_knot     = max(1, total_N // k)             # equal allocation: ⌊N/k⌋ per knot
+#                 x_knots_alloc  = np.linspace(l, u, k + 2)[1:-1]  # k equidistant interior knots
+#                 true_p         = dist.cdf(x_knots_alloc)
+#                 n_trials_alloc = n_per_knot * np.ones(k, dtype=int)
+#
+#                 # Sup-norm grid: a dense grid plus the fitted knots and both endpoints, so the
+#                 # approximation cannot miss an endpoint or fitted-knot discrepancy
+#                 x_eval    = np.unique(np.concatenate((
+#                     np.linspace(l, u, 10_001),
+#                     x_knots_alloc,
+#                     [l, u],
+#                 )))
+#                 true_eval = dist.cdf(x_eval)
+#
+#                 for run_idx in range(num_runs_alloc):
+#                     y_samp = np.random.binomial(n_trials_alloc, true_p)   # y_i ~ Binomial(n_i, F_0(x_i))
+#                     fitted = fit_cdf_ifr(x_knots_alloc, n_trials_alloc, y_samp, l, u, 'linear')
+#                     fn     = sp.lambdify(x_sym, fitted, 'numpy')
+#                     with np.errstate(invalid='ignore', over='ignore'):
+#                         vals = np.asarray(fn(x_eval), dtype=float)
+#                     # The analytic-tail reconstruction should produce finite cdf values;
+#                     # a nonfinite value is a numerical failure worth detecting, not masking
+#                     if not np.all(np.isfinite(vals)):
+#                         raise RuntimeError("Nonfinite fitted-cdf evaluation.")
+#                     errors[ti, ki, run_idx] = np.max(np.abs(np.clip(vals, 0.0, 1.0) - true_eval))
+#                 pbar.update(1)
+#
+#     suffix = dist_cfg['suffix']
+#     np.savez(f'results/data/knot_allocation_{suffix}.npz',
+#              total_N_values=total_N_values, k_values=k_values_alloc,
+#              num_runs=num_runs_alloc, errors=errors)
+#     print(f'Saved knot_allocation_{suffix}.npz')
+#
+# print(f'Total time: {time.perf_counter() - t_start:.1f}s')
+#
+# #%%
+#
+# appendix_dists = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
+#
+# for dist_key, dist_cfg in appendix_dists.items():
+#     fig, ax = plt.subplots(figsize=(8, 6))
+#     x_fine = np.linspace(l, u, 500)
+#     dist   = dist_cfg['dist']
+#     ax.plot(x_fine, dist.cdf(x_fine), 'black', linewidth=2)
+#     # for k_mark in [2, 3, 4]:
+#     #     x_k = np.linspace(l, u, k_mark + 2)[1:-1]   # k equidistant interior knots, excluding l and u
+#     #     ax.scatter(x_k, dist.cdf(x_k),
+#     #                zorder=5, s=300, marker='x', linewidths=4, label=f'$k={k_mark}$')
+#     ax.set_xlabel(r'$x$')
+#     ax.set_ylabel(r'$F_0$')
+#     ax.grid(True, linestyle='--', alpha=0.4)
+#     ax.legend(loc='lower right')
+#     plt.tight_layout()
+#     plt.savefig(f'results/plots/distribution_{dist_cfg["suffix"]}.png', dpi=150, bbox_inches='tight')
+#     plt.show()
+#
+# #%%
+#
+# appendix_dists = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
+#
+# for dist_key, dist_cfg in appendix_dists.items():
+#     suffix       = dist_cfg['suffix']
+#     data         = np.load(f'results/data/knot_allocation_{suffix}.npz')
+#     total_N_list = data['total_N_values'].tolist()
+#     k_list       = data['k_values'].tolist()
+#     num_runs_    = int(data['num_runs'])
+#     errors       = data['errors']   # shape (len_totalN, len_k, num_runs)
+#
+#     cmap   = plt.cm.viridis
+#     colors = [cmap(i / max(len(total_N_list) - 1, 1)) for i in range(len(total_N_list))]
+#
+#     fig, ax = plt.subplots(figsize=(8, 6))
+#     for ti, total_N in enumerate(total_N_list):
+#         with np.errstate(all='ignore'):
+#             y_mean = np.nanmean(errors[ti, :, :], axis=1)
+#             y_se   = np.nanstd( errors[ti, :, :], axis=1, ddof=1) / np.sqrt(num_runs_)
+#         ax.plot(k_list, y_mean, marker='o', color=colors[ti], label=f'$N={total_N}$')
+#         ax.fill_between(k_list, y_mean - y_se, y_mean + y_se, alpha=0.12, color=colors[ti])
+#
+#     ax.set_xlabel(r'$k$')
+#     ax.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
+#     ax.set_ylim(0, 0.4)
+#     # ax.set_title(dist_cfg['label'], fontsize=14)
+#     ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+#     ax.legend(loc='upper right', ncol=1, columnspacing=0.8, handletextpad=0.4)
+#     ax.grid(True, linestyle='--', alpha=0.4)
+#     plt.tight_layout()
+#     plt.savefig(f'results/plots/knot_allocation_{suffix}.png', dpi=150, bbox_inches='tight')
+#     plt.show()
+#
+#
+#
+#
+# #%%
+# ###################################################################################
+# ###################################################################################
+# #######################       EXPERIMENT 2 (APPENDIX)     #########################
+# ###################################################################################
+# ###################################################################################
+# ###################################################################################
+# #%%
+#
+# from fitting import fit_cdf_nonconvex
+#
+# np.random.seed(0)
+#
+# k_values_mc   = list(range(1, 6))
+# n_i_values_mc = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 25, 30, 35, 40, 45, 50, 70, 90, 110, 130, 150]
+# num_runs_mc   = 25   # reduce for testing
+# d_values      = [2, 4, 6]   # inter-knot grid points for Discretized-IFR (higher d → finer grid, harder problem)
+#
+# # k_values_mc   = [3,5]    # k ∈ {1, 2, 3, 4, 5} knots
+# # n_i_values_mc = [2, 10, 25, 150]
+# # num_runs_mc   = 2                   # Monte Carlo replications per (k, n_i) setting
+# # d_values      = [1,2]           # inter-knot grid points for Discretized-IFR (Section 6.3)
+#
+#
+# appendix_dists = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
+#
+# method_names = ['algo1'] + [f'discretized_ifr_{d}' for d in d_values] + ['discretized_non_ifr']
+#
+# t_start = time.perf_counter()
+# for dist_key, dist_cfg in appendix_dists.items():
+#     dist = dist_cfg['dist']
+#
+#     shape      = (len(k_values_mc), len(n_i_values_mc), num_runs_mc)
+#     all_times  = {m: np.full(shape, np.nan) for m in method_names}
+#     all_errors = {m: np.full(shape, np.nan) for m in method_names}
+#
+#     with tqdm(total=len(k_values_mc) * len(n_i_values_mc), desc=dist_key) as pbar:
+#         for ki, k in enumerate(k_values_mc):
+#             x_knots_mc = np.linspace(l, u, k + 2)[1:-1]   # k equidistant interior knots
+#
+#             # Sup-norm grid: a dense grid plus the fitted knots and both endpoints, so the
+#             # Algorithm 1 L-inf error cannot miss an endpoint or fitted-knot discrepancy
+#             x_eval_mc    = np.unique(np.concatenate((
+#                 np.linspace(l, u, 10_001),
+#                 x_knots_mc,
+#                 [l, u],
+#             )))
+#             true_eval_mc = dist.cdf(x_eval_mc)         # true CDF on the sup-norm grid
+#             true_p       = dist.cdf(x_knots_mc)        # true CDF at knots; constant across n_i and runs
+#
+#             for ni, n_i in enumerate(n_i_values_mc):
+#                 pbar.set_postfix(k=k, n_i=n_i)
+#                 n_trials_mc = n_i * np.ones(k, dtype=int)   # same trial budget for every run at this (k, n_i)
+#                 for run_idx in range(num_runs_mc):
+#                     y_samp      = np.random.binomial(n_trials_mc, true_p)   # y_i ~ Binomial(n_i, F_0(x_i))
+#
+#                     # Discretized-IFR (Gurobi): try d values in increasing order; break on first failure
+#                     # because larger d makes the bilinear program harder and will also fail
+#                     for dval in d_values:
+#                         key = f'discretized_ifr_{dval}'
+#                         t0  = time.perf_counter()
+#                         try:
+#                             x_nc, F_nc = fit_cdf_nonconvex(x_knots_mc, n_trials_mc, y_samp, l, u, dval,
+#                                                             ifr_constraint=True, verbose=False, return_type='values')
+#                             all_errors[key][ki, ni, run_idx] = _l_inf_step_dist(x_nc, F_nc, dist)
+#                             all_times[key][ki, ni, run_idx]  = time.perf_counter() - t0
+#                         except Exception:
+#                             break   # leave remaining d values as nan and move on
+#
+#                     # Algorithm 1: convex program in t-space (CVXPY), PWL interpolation + analytic tail
+#                     try:
+#                         t0 = time.perf_counter()
+#                         fitted = fit_cdf_ifr(x_knots_mc, n_trials_mc, y_samp, l, u, 'linear')
+#                         elapsed = time.perf_counter() - t0
+#                         fn = sp.lambdify(x_sym, fitted, 'numpy')
+#                         with np.errstate(invalid='ignore', over='ignore'):
+#                             algo1_vals = np.asarray(fn(x_eval_mc), dtype=float)
+#                         # The analytic-tail reconstruction should produce finite cdf values;
+#                         # a nonfinite value is a numerical failure worth surfacing, not masking
+#                         if not np.all(np.isfinite(algo1_vals)):
+#                             raise RuntimeError("Nonfinite fitted-cdf evaluation.")
+#                         all_times['algo1'][ki, ni, run_idx]  = elapsed
+#                         all_errors['algo1'][ki, ni, run_idx] = np.max(np.abs(np.clip(algo1_vals, 0.0, 1.0) - true_eval_mc))
+#                     except Exception as exc:
+#                         # Record the failure as NaN and keep the sweep running, but surface it loudly
+#                         # so a genuine numerical problem is not silently ignored.
+#                         print(f"WARNING: Algorithm 1 failed at dist={dist_key}, k={k}, n_i={n_i}, run={run_idx}: {exc}")
+#
+#                     # Discretized-non-IFR (Gurobi): monotonicity only, no IFR; d=0 uses knots only
+#                     try:
+#                         t0 = time.perf_counter()
+#                         x_ni, F_ni = fit_cdf_nonconvex(x_knots_mc, n_trials_mc, y_samp, l, u, 0,
+#                                                         ifr_constraint=False, verbose=False, return_type='values')
+#                         all_times['discretized_non_ifr'][ki, ni, run_idx]  = time.perf_counter() - t0
+#                         all_errors['discretized_non_ifr'][ki, ni, run_idx] = _l_inf_step_dist(x_ni, F_ni, dist)
+#                     except Exception:
+#                         pass
+#
+#                 pbar.update(1)
+#
+#     suffix = dist_cfg['suffix']
+#     np.savez(f'results/data/method_comparison_{suffix}.npz',
+#         k_values=k_values_mc, n_i_values=n_i_values_mc, num_runs=num_runs_mc, d_values=d_values,
+#         **{f'{m}_errors': all_errors[m] for m in method_names},
+#         **{f'{m}_times':  all_times[m]  for m in method_names},
+#     )
+#     print(f'Saved method_comparison_{suffix}.npz')
+#
+# print(f'Total time: {time.perf_counter() - t_start:.1f}s')
+#
+# #%%
+#
+# appendix_dists  = {k: v for k, v in DISTRIBUTIONS.items() if k != 'beta'}
+# d_values        = [2,4,6]
+# nc_linestyles   = ['-', '--', ':', '-.', (0, (3, 1, 1, 1))]
+# method_keys     = ['algo1'] + [f'discretized_ifr_{d}' for d in d_values] + ['discretized_non_ifr']
+# method_labels   = (['Algorithm 1']
+#                    + [f'Discretized-IFR ($d={d}$)' for d in d_values]
+#                    + ['Discretized-non-IFR'])
+# colors_mc       = ['green'] + ['red'] * len(d_values) + ['purple']
+# linestyles_mc   = ['-'] + nc_linestyles[:len(d_values)] + ['-']
+#
+# for dist_key, dist_cfg in appendix_dists.items():
+#     suffix     = dist_cfg['suffix']
+#     data       = np.load(f'results/data/method_comparison_{suffix}.npz')
+#     k_values   = data['k_values'].tolist()
+#     n_i_values = data['n_i_values'].tolist()
+#     num_runs_\
+#         = int(data['num_runs'])
+#     raw_errors = {m: data[f'{m}_errors'] for m in method_keys}
+#
+#     ki_fix = len(k_values) // 2   # middle k (k=3 when k ∈ {1..5})
+#     ni_fix = -1                    # largest n_i in sweep
+#
+#     fig, axes = plt.subplots(1, 2, figsize=(13, 6))
+#
+#     # LHS: vary n_i at fixed k
+#     ax = axes[0]
+#     for m, label, c, ls in zip(method_keys, method_labels, colors_mc, linestyles_mc):
+#         slice_ = raw_errors[m][ki_fix, :, :]   # shape (len_n_i, num_runs)
+#         with np.errstate(all='ignore'):
+#             y_mean = np.nanmean(slice_, axis=1)
+#             y_se   = np.nanstd( slice_, axis=1, ddof=1) / np.sqrt(num_runs_)
+#         ax.plot(n_i_values, y_mean, marker='o', color=c, linestyle=ls, label=label)
+#         ax.fill_between(n_i_values, y_mean - y_se, y_mean + y_se, alpha=0.15, color=c)
+#     ax.set_xlabel(r'$n_i$')
+#     ax.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
+#     ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8])
+#     ax.grid(True, linestyle='--', alpha=0.4)
+#
+#     # RHS: vary k at fixed n_i
+#     ax = axes[1]
+#     for m, label, c, ls in zip(method_keys, method_labels, colors_mc, linestyles_mc):
+#         slice_ = raw_errors[m][:, ni_fix, :]   # shape (len_k, num_runs)
+#         with np.errstate(all='ignore'):
+#             y_mean = np.nanmean(slice_, axis=1)
+#             y_se   = np.nanstd( slice_, axis=1, ddof=1) / np.sqrt(num_runs_)
+#         ax.plot(k_values, y_mean, marker='o', color=c, linestyle=ls, label=label)
+#         ax.fill_between(k_values, y_mean - y_se, y_mean + y_se, alpha=0.15, color=c)
+#     ax.set_xlabel(r'$k$')
+#     ax.set_ylabel(r'$\|F_0 - \hat{F}\|_{[l,u]}$')
+#     ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8])
+#     ax.grid(True, linestyle='--', alpha=0.4)
+#
+#     handles, labels_ = axes[0].get_legend_handles_labels()
+#     fig.legend(handles, labels_, loc='lower center', ncol=3, bbox_to_anchor=(0.5, -0.02))
+#     plt.tight_layout(rect=[0, 0.15, 1, 1])
+#     plt.savefig(f'results/plots/method_comparison_appendix_{suffix}.png', dpi=150, bbox_inches='tight')
+#     plt.show()
